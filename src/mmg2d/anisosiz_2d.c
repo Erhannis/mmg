@@ -31,11 +31,13 @@
  * \date 01 2014
  * \copyright GNU Lesser General Public License.
  **/
-#include "mmg2d.h"
+#include "libmmg2d_private.h"
+#include "libmmg2d.h"
+#include "mmg2dexterns_private.h"
 
 /**
- * \param mesh pointer toward the mesh
- * \param met pointer toward the metric
+ * \param mesh pointer to the mesh
+ * \param met pointer to the metric
  * \param k elt index
  * \param i vertex index in triangle \a k
  *
@@ -46,10 +48,10 @@
  * able to truncate it with the local params later.
  *
  */
-int MMG2D_defaultmet_2d(MMG5_pMesh mesh,MMG5_pSol met,int k,char i) {
+int MMG2D_defaultmet_2d(MMG5_pMesh mesh,MMG5_pSol met,MMG5_int k,int8_t i) {
   MMG5_pTria       pt;
   double           *m,isqhmax;
-  int              ip;
+  MMG5_int         ip;
 
   isqhmax = mesh->info.hmax;
 
@@ -68,8 +70,8 @@ int MMG2D_defaultmet_2d(MMG5_pMesh mesh,MMG5_pSol met,int k,char i) {
 }
 
 /**
- * \param mesh pointer toward the mesh
- * \param met pointer toward the metric
+ * \param mesh pointer to the mesh
+ * \param met pointer to the metric
  * \param k index of the tria in which we work
  * \param i index of the point on which we want to compute the metric
  *
@@ -81,16 +83,17 @@ int MMG2D_defaultmet_2d(MMG5_pMesh mesh,MMG5_pSol met,int k,char i) {
  * imposing the local parameters later.
  *
  */
-int MMG2D_defmetbdy_2d(MMG5_pMesh mesh,MMG5_pSol met,int k,char i) {
+int MMG2D_defmetbdy_2d(MMG5_pMesh mesh,MMG5_pSol met,MMG5_int k,int8_t i) {
   MMG5_pTria      pt;
   MMG5_pPoint     p0,p1,p2;
   MMG5_pPar       ppa;
   double          hausd,hmin,hmax,sqhmin,sqhmax,ux,uy,ll,li,ps1,ps2,lm,ltmp,pv;
   double          M1,M2,t1[2],t2[2],b1[2],b2[2],*n,*m;
   double          gpp1[2],gpp2[2];
-  int             ilist,iel,ip,ip1,ip2,it[2],l,list[MMG2D_LONMAX+2];
+  MMG5_int        iel,ip,ip1,ip2,it[2],list[MMG5_TRIA_LMAX+2];
+  int             ilist,l;
   int8_t          isloc,hausdloc;
-  char            i0,i1,i2,j;
+  int8_t          i0,i1,i2,j;
   static int8_t   mmgWarn0=0,mmgWarn1=0,mmgWarn2=0;
 
   hmin   = mesh->info.hmin;
@@ -103,7 +106,8 @@ int MMG2D_defmetbdy_2d(MMG5_pMesh mesh,MMG5_pSol met,int k,char i) {
   m = &met->m[3*ip];
 
   ip1 = ip2 = 0;
-  ilist = MMG2D_boulet(mesh,k,i,list);
+  int8_t dummy;
+  ilist = MMG5_boulet(mesh,k,i,list,0,&dummy);
 
   /* Local parameters if needed: note that the hausdorff param is only looked if
    * imposed on an edge */
@@ -276,7 +280,7 @@ int MMG2D_defmetbdy_2d(MMG5_pMesh mesh,MMG5_pSol met,int k,char i) {
     li = 1.0 / sqrt(ll);
 
     /* Tangent vector at p1 */
-    if ( MG_SIN(p1->tag) || p1->tag & MG_NOM ) {
+    if ( (MG_CRN & p1->tag) || p1->tag & MG_NOM ) {
       t1[0] = li*ux;
       t1[1] = li*uy;
     }
@@ -286,7 +290,7 @@ int MMG2D_defmetbdy_2d(MMG5_pMesh mesh,MMG5_pSol met,int k,char i) {
     }
 
     /* Tangent vector at p2 */
-    if ( MG_SIN(p2->tag) || p2->tag & MG_NOM ) {
+    if ( (MG_CRN & p2->tag) || p2->tag & MG_NOM ) {
       t2[0] = li*ux;
       t2[1] = li*uy;
     }
@@ -348,8 +352,8 @@ int MMG2D_defmetbdy_2d(MMG5_pMesh mesh,MMG5_pSol met,int k,char i) {
 }
 
 /**
- * \param mesh pointer toward the mesh
- * \param met pointer toward the metric
+ * \param mesh pointer to the mesh
+ * \param met pointer to the metric
  *
  * \return 0 if fail, 1 if success
  *
@@ -361,9 +365,10 @@ int MMG2D_defsiz_ani(MMG5_pMesh mesh,MMG5_pSol met) {
   MMG5_pPoint    ppt;
   MMG5_pPar      ppa;
   double         mm[3],mr[3],isqhmax;
-  int            k,l,ip;
+  MMG5_int       k,ip;
+  int            l;
   int8_t         ismet;
-  char           isdef,i;
+  int8_t         isdef,i;
 
   if ( !MMG5_defsiz_startingMessage (mesh,met,__func__) ) {
     return 0;
@@ -376,22 +381,23 @@ int MMG2D_defsiz_ani(MMG5_pMesh mesh,MMG5_pSol met) {
   }
 
   /* Allocate the structure */
-  if ( met->m )
+  if ( met->m ) {
     ismet = 1;
+  }
   else {
     ismet = 0;
     if ( !MMG2D_Set_solSize(mesh,met,MMG5_Vertex,mesh->np,3) ) {
       return 0;
     }
-    /* Set_solSize modify the value of the inputMet field => we need to reset it */
-    mesh->info.inputMet = 0;
   }
 
   /** Step 1: Set metric at points belonging to a required edge: compute the
    * metric as the mean of the length of the required eges passing through the
    * point */
-  if ( !MMG2D_set_metricAtPointsOnReqEdges ( mesh,met ) ) {
-    return 0;
+  if ( !mesh->info.nosizreq ) {
+    if ( !MMG2D_set_metricAtPointsOnReqEdges ( mesh,met,ismet ) ) {
+      return 0;
+    }
   }
 
   /* Step 2: Travel all the points (via triangles) in the mesh and set metric tensor */
@@ -409,7 +415,7 @@ int MMG2D_defsiz_ani(MMG5_pMesh mesh,MMG5_pSol met) {
       isdef = 0;
       /* Calculation of a metric tensor depending on the anisotropic features of the mesh */
       /* At a singular point, an isotropic metric with size hmax is defined */
-      if ( MG_SIN(ppt->tag) || ppt->tag & MG_NOM ) {
+      if ( (MG_CRN & ppt->tag) || ppt->tag & MG_NOM ) {
         /* Set the point flag to 1 */
         if ( MMG2D_defaultmet_2d(mesh,met,k,i) ) isdef = 1;
       }
@@ -512,50 +518,9 @@ void MMG2D_gradEigenv(double dm[2],double dn[2],double difsiz,int8_t dir,int8_t 
 }
 
 /**
- * \param m first matrix
- * \param n second matrix
- * \param dm eigenvalues of m in the coreduction basis
- * \param dn eigenvalues of n in the coreduction basis
- * \param vp coreduction basis
- * \param ier flag of the updated sizes: (ier & 1) if we dm has been modified, (ier & 2) if dn has been modified.
- *
- * \return 0 if fail, 1 otherwise
- *
- * Update of the metrics = tP^-1 diag(d0,d1)P^-1, P = (vp[0], vp[1]) stored in
- * columns
- *
- */
-static inline
-int MMG2D_updatemet_ani(double *m,double *n,double dm[2],double dn[2],
-                         double vp[2][2],int8_t ier ) {
-  double det,ip[4];
-
-  det = vp[0][0]*vp[1][1] - vp[0][1]*vp[1][0];
-  if ( fabs(det) < MMG5_EPS )  return 0;
-  det = 1.0 / det;
-
-  ip[0] =  vp[1][1]*det;
-  ip[1] = -vp[1][0]*det;
-  ip[2] = -vp[0][1]*det;
-  ip[3] =  vp[0][0]*det;
-
-  if ( ier & 1 ) {
-    m[0] = dm[0]*ip[0]*ip[0] + dm[1]*ip[2]*ip[2];
-    m[1] = dm[0]*ip[0]*ip[1] + dm[1]*ip[2]*ip[3];
-    m[2] = dm[0]*ip[1]*ip[1] + dm[1]*ip[3]*ip[3];
-  }
-  if ( ier & 2 ) {
-    n[0] = dn[0]*ip[0]*ip[0] + dn[1]*ip[2]*ip[2];
-    n[1] = dn[0]*ip[0]*ip[1] + dn[1]*ip[2]*ip[3];
-    n[2] = dn[0]*ip[1]*ip[1] + dn[1]*ip[3]*ip[3];
-  }
-  return 1;
-}
-
-/**
- * \param mesh pointer toward the mesh
- * \param met pointer toward the metric
- * \param pt pointer toward the processed triangle.
+ * \param mesh pointer to the mesh
+ * \param met pointer to the metric
+ * \param pt pointer to the processed triangle.
  * \param np1 first edge extremity (global index)
  * \param np2 second edge extremity (global index)
  *
@@ -569,7 +534,7 @@ int MMG2D_updatemet_ani(double *m,double *n,double dm[2],double dn[2],
  * Ref : https://www.rocq.inria.fr/gamma/Frederic.Alauzet/cours/cea2010_V2.pdf
  *
  */
-int MMG2D_grad2met_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_pTria pt,int np1,int np2) {
+MMG5_int MMG2D_grad2met_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_pTria pt,MMG5_int np1,MMG5_int np2) {
   MMG5_pPoint  p1,p2;
   double       dm[2],dn[2];
   double       vp[2][2],*m,*n,ll,difsiz;
@@ -591,7 +556,7 @@ int MMG2D_grad2met_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_pTria pt,int np1,int n
   n = &met->m[met->size*np2];
 
   /* Simultaneous reduction of m1 and m2 */
-  if ( !MMG5_simred(mesh,m,n,dm,dn,vp) ) {
+  if ( !MMG5_simred2d(mesh,m,n,dm,dn,vp) ) {
     return 0;
   }
 
@@ -607,7 +572,7 @@ int MMG2D_grad2met_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_pTria pt,int np1,int n
 
   /* Update of the metrics = tP^-1 diag(d0,d1)P^-1, P = (vp[0], vp[1]) stored in
    * columns */
-  if ( !MMG2D_updatemet_ani(m,n,dm,dn,vp,ier ) ) {
+  if ( !MMG5_updatemet2d_ani(m,n,dm,dn,vp,ier ) ) {
     return 0;
   }
 
@@ -616,9 +581,9 @@ int MMG2D_grad2met_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_pTria pt,int np1,int n
 }
 
 /**
- * \param mesh pointer toward the mesh
- * \param met pointer toward the metric
- * \param pt pointer toward the processed tria.
+ * \param mesh pointer to the mesh
+ * \param met pointer to the metric
+ * \param pt pointer to the processed tria.
  * \param npmaster edge extremity that cannot be modified
  * \param npslave edge extremity to modify to respect the gradation.
  *
@@ -633,7 +598,7 @@ int MMG2D_grad2met_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_pTria pt,int np1,int n
  *
  */
 int MMG2D_grad2metreq_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_pTria pt,
-                          int npmaster,int npslave) {
+                          MMG5_int npmaster,MMG5_int npslave) {
   MMG5_pPoint  p2,p1;
   double       ux,uy,dm[2],dn[2];
   double       vp[2][2],*m,*n,ll,difsiz;
@@ -657,7 +622,7 @@ int MMG2D_grad2metreq_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_pTria pt,
   n = &met->m[met->size*npslave];
 
   /* Simultaneous reduction of m1 and m2 */
-  if ( !MMG5_simred(mesh,m,n,dm,dn,vp) ) {
+  if ( !MMG5_simred2d(mesh,m,n,dm,dn,vp) ) {
     return 0;
   }
 

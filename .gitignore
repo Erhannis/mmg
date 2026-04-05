@@ -30,3 +30,11 @@ ci_tests
 src/common/mmg.h
 
 include/*
+*.o
+
+.DS_Store
+.vscode
+
+TAGS
+.scannerwork/*
+sonar-project.properties

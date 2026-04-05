@@ -20,13 +20,14 @@
 **  use this copy of the mmg distribution only if you accept them.
 ** =============================================================================
 */
-#include "mmg2d.h"
+#include "libmmg2d_private.h"
+#include "mmg2dexterns_private.h"
 
-extern unsigned char ddb;
+extern uint8_t ddb;
 
 /**
- * \param mesh pointer toward the mesh
- * \param met pointer toward the metric
+ * \param mesh pointer to the mesh
+ * \param met pointer to the metric
  * \param k triangle index
  * \param i local index of the edge that we want to test in the triangle \a k
  * \param list edge's shell (to fill)
@@ -38,12 +39,13 @@ extern unsigned char ddb;
  * preserved when collapsing edge i (p1->p2)
  *
  */
-int MMG2D_chkcol(MMG5_pMesh mesh, MMG5_pSol met,int k,char i,int *list,char typchk) {
-  MMG5_pTria           pt0,pt,pt1,pt2;
-  MMG5_pPoint          ppt,p2;
-  double               lon,len,calold,calnew,caltmp;
-  int                  ip1,ip2,ipb,l,ll,lj,jel,kel,ilist,*adja;
-  unsigned char        i1,i2,j,jj,j2,voy,open;
+int MMG2D_chkcol(MMG5_pMesh mesh, MMG5_pSol met,MMG5_int k,int8_t i,MMG5_int *list,int8_t typchk) {
+  MMG5_pTria     pt0,pt,pt1,pt2;
+  MMG5_pPoint    ppt,p2;
+  double         lon,len,calold,calnew,caltmp;
+  MMG5_int       ip1,ip2,ipb,l,ll,lj,jel,kel,*adja;
+  int            ilist;
+  uint8_t        i1,i2,j,jj,j2,voy,open;
 
   pt0 = &mesh->tria[0];
   pt = &mesh->tria[k];
@@ -88,7 +90,8 @@ int MMG2D_chkcol(MMG5_pMesh mesh, MMG5_pSol met,int k,char i,int *list,char typc
 
   /* collect all triangles around vertex i1
    simplification w.r.to the surface case: no need to use spacial ball boulechknm (impossible situation in 2d) */
-  ilist = MMG2D_boulet(mesh,k,i1,list);
+  int8_t dummy;
+  ilist = MMG5_boulet(mesh,k,i1,list,0,&dummy);
   if ( ilist <= 0 )
     return 0;
 
@@ -140,7 +143,7 @@ int MMG2D_chkcol(MMG5_pMesh mesh, MMG5_pSol met,int k,char i,int *list,char typc
       jel = list[1] / 3;
       if ( ! jel ) return 0;
       pt1 = &mesh->tria[jel];
-      if ( abs(pt->ref) != abs(pt1->ref) )  return 0;
+      if ( MMG5_abs(pt->ref) != MMG5_abs(pt1->ref) )  return 0;
     }*/
 
     /* Travel the ball of i1 (but for the two elements 0 and ilist-1 (the last one in the case of
@@ -245,7 +248,7 @@ int MMG2D_chkcol(MMG5_pMesh mesh, MMG5_pSol met,int k,char i,int *list,char typc
 
     jj  = MMG5_inxt2[j];
     pt1 = &mesh->tria[jel];
-    if ( abs(pt->ref) != abs(pt1->ref) )  return 0;
+    if ( MMG5_abs(pt->ref) != MMG5_abs(pt1->ref) )  return 0;
     else if ( !(pt1->tag[jj] & MG_GEO) )  return 0;
 
     /* Check quality and geometric approximation: elements with two trias in the
@@ -267,10 +270,10 @@ int MMG2D_chkcol(MMG5_pMesh mesh, MMG5_pSol met,int k,char i,int *list,char typc
 }
 
 /* Perform effective collapse of edge i in tria k, i1->i2 */
-int MMG2D_colver(MMG5_pMesh mesh,int ilist,int *list) {
-  MMG5_pTria         pt,pt1,pt2;
-  int                iel,jel,ip1,ip2,k,kel,*adja;
-  unsigned char      i,j,jj,i1,i2,open;
+int MMG2D_colver(MMG5_pMesh mesh,int ilist,MMG5_int *list) {
+  MMG5_pTria   pt,pt1,pt2;
+  MMG5_int     iel,jel,ip1,ip2,k,kel,*adja;
+  uint8_t      i,j,jj,i1,i2,open;
 
   iel = list[0] / 3;
   i1 =   list[0] % 3;
@@ -353,10 +356,10 @@ int MMG2D_colver(MMG5_pMesh mesh,int ilist,int *list) {
 
 /* Perform effective collapse of edge i in tria k, i1->i2
    in the particular case where only three elements are in the ball of i */
-int MMG2D_colver3(MMG5_pMesh mesh,int *list) {
-  MMG5_pTria           pt,pt1,pt2;
-  int                  iel,jel,kel,mel,ip,*adja;
-  unsigned char        i,i1,j,j1,j2,k,m;
+int MMG2D_colver3(MMG5_pMesh mesh,MMG5_int *list) {
+  MMG5_pTria  pt,pt1,pt2;
+  MMG5_int    iel,jel,kel,mel,ip,*adja;
+  uint8_t     i,i1,j,j1,j2,k,m;
 
   /* Update of the new point for triangle list[0] */
   iel = list[0] / 3;
@@ -415,10 +418,10 @@ int MMG2D_colver3(MMG5_pMesh mesh,int *list) {
 
 /* Perform effective collapse of edge i in tria k, i1->i2
  in the particular case where only two elements are in the ball of i */
-int MMG2D_colver2(MMG5_pMesh mesh,int *list) {
+int MMG2D_colver2(MMG5_pMesh mesh,MMG5_int *list) {
   MMG5_pTria   pt,pt1;
-  int          *adja,iel,jel,kel,ip1,ip2;
-  char         i1,i2,jj,j2,k;
+  MMG5_int     *adja,iel,jel,kel,ip1,ip2;
+  int8_t       i1,i2,jj,j2,k;
 
   /* update of new point for triangle list[0] */
   iel = list[0] / 3;

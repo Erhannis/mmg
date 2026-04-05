@@ -39,12 +39,13 @@ FILE(MAKE_DIRECTORY  ${MMG2D_BINARY_DIR})
 #####
 ############################################################################
 
-GENERATE_FORTRAN_HEADER ( mmg2d
-  ${MMG2D_SOURCE_DIR} libmmg2d.h
-  ${MMG2D_SHRT_INCLUDE}
-  ${MMG2D_BINARY_DIR} libmmg2df.h
-  )
-
+if (PERL_FOUND)
+  GENERATE_FORTRAN_HEADER ( mmg2d
+    ${MMG2D_SOURCE_DIR} libmmg2d.h
+    mmg/common
+    ${MMG2D_BINARY_DIR} libmmg2df.h
+    )
+endif(PERL_FOUND)
 ###############################################################################
 #####
 #####         Sources and libraries
@@ -56,15 +57,27 @@ FILE(
   GLOB
   mmg2d_library_files
   ${MMG2D_SOURCE_DIR}/*.c
-  ${COMMON_SOURCE_DIR}/*.c
+  ${MMGCOMMON_SOURCE_DIR}/*.c
+  ${MMG2D_SOURCE_DIR}/*.h
+  ${MMGCOMMON_SOURCE_DIR}/*.h
+  ${MMG2D_SOURCE_DIR}/inoutcpp_2d.cpp
   )
+
 LIST(REMOVE_ITEM mmg2d_library_files
   ${MMG2D_SOURCE_DIR}/mmg2d.c
+  ${MMGCOMMON_SOURCE_DIR}/apptools.c
   ${REMOVE_FILE} )
+
+IF ( VTK_FOUND AND NOT USE_VTK MATCHES OFF )
+  LIST(APPEND  mmg2d_library_files
+    ${MMGCOMMON_SOURCE_DIR}/vtkparser.cpp )
+ENDIF ( )
+
 FILE(
   GLOB
   mmg2d_main_file
   ${MMG2D_SOURCE_DIR}/mmg2d.c
+  ${MMGCOMMON_SOURCE_DIR}/apptools.c
   )
 
 ############################################################################
@@ -73,27 +86,19 @@ FILE(
 #####
 ############################################################################
 
-IF( USE_ELAS )
-# Set flags for building test program
-INCLUDE_DIRECTORIES(${ELAS_INCLUDE_DIR})
+IF( ELAS_FOUND AND NOT USE_ELAS MATCHES OFF )
+  # Set flags for building test program
+  INCLUDE_DIRECTORIES(AFTER ${ELAS_INCLUDE_DIR})
 
-SET(CMAKE_REQUIRED_INCLUDES ${ELAS_INCLUDE_DIR})
-SET(CMAKE_REQUIRED_LIBRARIES ${ELAS_LIBRARY})
+  SET(CMAKE_REQUIRED_INCLUDES ${ELAS_INCLUDE_DIR})
+  SET(CMAKE_REQUIRED_LIBRARIES ${ELAS_LIBRARY})
 
-SET(CMAKE_C_FLAGS "-DUSE_ELAS ${CMAKE_C_FLAGS}")
-MESSAGE(STATUS
-"Compilation with the Elas library: ${ELAS_LIBRARY} ")
-SET( LIBRARIES ${ELAS_LINK_FLAGS} ${LIBRARIES})
-SET( LIBRARIES ${ELAS_LIBRARY} ${LIBRARIES})
-ENDIF()
+  SET(CMAKE_C_FLAGS "-DUSE_ELAS ${CMAKE_C_FLAGS}")
+  MESSAGE(STATUS
+    "Compilation with the Elas library: ${ELAS_LIBRARY} ")
+  SET( LIBRARIES ${ELAS_LINK_FLAGS} ${LIBRARIES})
+  SET( LIBRARIES ${ELAS_LIBRARY} ${LIBRARIES})
 
-IF (ELAS_NOTFOUND)
-MESSAGE ( WARNING "Elas is a library to solve the linear elasticity "
-    "problem (see https://github.com/SUscTools/Elas to download it). "
-"This library is needed to use the lagrangian motion option. "
-    "If you have already installed Elas and want to use it, "
-"please set the CMake variable or environment variable ELAS_DIR "
-"to your Elas directory.")
 ENDIF ( )
 
 ############################################################################
@@ -101,46 +106,50 @@ ENDIF ( )
 #####         Compile mmg2d libraries
 #####
 ############################################################################
+# mmg2d header files needed for library
+#
+# Remark: header installation would need to be cleaned, for now, to allow
+# independent build of each project and because mmgs and mmg2d have been added
+# to mmg3d without rethinking the install architecture, the header files that
+# are common between codes are copied in all include directories (mmg/,
+# mmg/mmg3d/, mmg/mmgs/, mmg/mmg2d/).  they are also copied in build directory
+# to enable library call without installation.
+SET( mmg2d_headers
+  ${MMG2D_SOURCE_DIR}/mmg2d_export.h
+  ${MMG2D_SOURCE_DIR}/libmmg2d.h
+  )
+
+IF ( PERL_FOUND )
+  LIST ( APPEND mmg2d_headers   ${MMG2D_BINARY_DIR}/libmmg2df.h )
+ENDIF()
+
+IF ( MMG_INSTALL_PRIVATE_HEADERS )
+  LIST ( APPEND mmg2d_headers
+    ${MMG2D_SOURCE_DIR}/libmmg2d_private.h
+    ${MMG2D_SOURCE_DIR}/mmg2dexterns_private.h
+    )
+ENDIF()
+
+# install man pages
+INSTALL(FILES ${PROJECT_SOURCE_DIR}/doc/man/mmg2d.1.gz DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
+
+# Install header files in /usr/local or equivalent
+INSTALL(FILES ${mmg2d_headers} DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/mmg/mmg2d COMPONENT headers )
+
+# Copy header files in project directory at build step
+COPY_HEADERS_AND_CREATE_TARGET ( ${MMG2D_SOURCE_DIR} ${MMG2D_BINARY_DIR} ${MMG2D_INCLUDE} 2d )
+
 # Compile static library
 IF ( LIBMMG2D_STATIC )
-  ADD_AND_INSTALL_LIBRARY ( lib${PROJECT_NAME}2d_a STATIC
+  ADD_AND_INSTALL_LIBRARY ( lib${PROJECT_NAME}2d_a STATIC copy_2d_headers
     "${mmg2d_library_files}" ${PROJECT_NAME}2d )
 ENDIF()
 
 # Compile shared library
 IF ( LIBMMG2D_SHARED )
-  ADD_AND_INSTALL_LIBRARY ( lib${PROJECT_NAME}2d_so SHARED
+  ADD_AND_INSTALL_LIBRARY ( lib${PROJECT_NAME}2d_so SHARED copy_2d_headers
     "${mmg2d_library_files}" ${PROJECT_NAME}2d )
 ENDIF()
-
-# mmg2d header files needed for library
-SET( mmg2d_headers
-  ${MMG2D_SOURCE_DIR}/libmmg2d.h
-  ${MMG2D_BINARY_DIR}/libmmg2df.h
-  ${COMMON_SOURCE_DIR}/libmmgtypes.h
-  ${COMMON_BINARY_DIR}/libmmgtypesf.h
-  )
-
-# Install header files in /usr/local or equivalent
-INSTALL(FILES ${mmg2d_headers} DESTINATION include/mmg/mmg2d COMPONENT headers )
-
-COPY_FORTRAN_HEADER_AND_CREATE_TARGET ( ${MMG2D_BINARY_DIR} ${MMG2D_INCLUDE} 2d )
-
-# Copy header files in project directory at configuration step
-# (generated file don't exists yet or are outdated)
-FILE(INSTALL  ${mmg2d_headers} DESTINATION ${MMG2D_INCLUDE}
-  PATTERN "libmmg*f.h"  EXCLUDE)
-
-############################################################################
-#####
-#####         Compile program to test library
-#####
-############################################################################
-SET(MMG2D_CI_TESTS ${CI_DIR}/mmg2d )
-
-IF ( TEST_LIBMMG2D )
-  INCLUDE(cmake/testing/libmmg2d_tests.cmake)
-ENDIF ( )
 
 ###############################################################################
 #####
@@ -148,8 +157,9 @@ ENDIF ( )
 #####
 ###############################################################################
 
-ADD_AND_INSTALL_EXECUTABLE ( ${PROJECT_NAME}2d
-  "${mmg2d_library_files}" ${mmg2d_main_file} )
+ADD_AND_INSTALL_EXECUTABLE ( ${PROJECT_NAME}2d copy_2d_headers
+  "${mmg2d_library_files}" "${mmg2d_main_file}" )
+
 
 ###############################################################################
 #####
@@ -157,93 +167,28 @@ ADD_AND_INSTALL_EXECUTABLE ( ${PROJECT_NAME}2d
 #####
 ###############################################################################
 
-IF ( BUILD_TESTING )
-  ##-------------------------------------------------------------------##
-  ##------- Set the continuous integration options --------------------##
-  ##-------------------------------------------------------------------##
+SET(MMG2D_CI_TESTS ${CI_DIR}/mmg2d )
 
-  ##-------------------------------------------------------------------##
-  ##--------------------------- Add tests and configure it ------------##
-  ##-------------------------------------------------------------------##
+##-------------------------------------------------------------------##
+##-------------- Library examples and APIs      ---------------------##
+##-------------------------------------------------------------------##
+IF ( TEST_LIBMMG2D )
+  # Build library executables and add library tests if needed
+  INCLUDE(libmmg2d_tests)
+ENDIF ( )
+
+##-------------------------------------------------------------------##
+##----------------------- Test Mmg2d executable ---------------------##
+##-------------------------------------------------------------------##
+IF ( BUILD_TESTING )
+
   # Add runtime that we want to test for mmg2d
   IF ( MMG2D_CI )
 
-    SET ( CTEST_OUTPUT_DIR ${PROJECT_BINARY_DIR}/TEST_OUTPUTS )
-    FILE ( MAKE_DIRECTORY  ${CTEST_OUTPUT_DIR} )
-
-    ADD_EXEC_TO_CI_TESTS ( ${PROJECT_NAME}2d EXECUT_MMG2D )
-
-    IF ( TEST_LIBMMG2D )
-      SET(LIBMMG2D_EXEC0_a ${EXECUTABLE_OUTPUT_PATH}/libmmg2d_example0_a )
-
-      SET(LIBMMG2D_EXEC0_b ${EXECUTABLE_OUTPUT_PATH}/libmmg2d_example0_b )
-      SET(LIBMMG2D_EXEC1 ${EXECUTABLE_OUTPUT_PATH}/libmmg2d_example1 )
-      SET(LIBMMG2D_EXEC2 ${EXECUTABLE_OUTPUT_PATH}/libmmg2d_example2 )
-      SET(LIBMMG2D_EXEC3 ${EXECUTABLE_OUTPUT_PATH}/libmmg2d_example3 )
-      SET(TEST_API2D_EXEC0 ${EXECUTABLE_OUTPUT_PATH}/test_api2d_0)
-
-
-      ADD_TEST(NAME libmmg2d_example0_a   COMMAND ${LIBMMG2D_EXEC0_a}
-        "${PROJECT_SOURCE_DIR}/libexamples/mmg2d/adaptation_example0/example0_a/init.mesh"
-        "${CTEST_OUTPUT_DIR}/libmmg2d_Adaptation_0_a-init.o"
-        )
-      ADD_TEST(NAME libmmg2d_example0_b   COMMAND ${LIBMMG2D_EXEC0_b}
-        "${CTEST_OUTPUT_DIR}/libmmg2d_Adaptation_0_b.o.mesh"
-        )
-      ADD_TEST(NAME libmmg2d_example1   COMMAND ${LIBMMG2D_EXEC1}
-        "${PROJECT_SOURCE_DIR}/libexamples/mmg2d/adaptation_example1/dom.mesh"
-        "${CTEST_OUTPUT_DIR}/libmmg2d_Adaptation_1-dom.o"
-       )
-      ADD_TEST(NAME libmmg2d_example2   COMMAND ${LIBMMG2D_EXEC2}
-        "${PROJECT_SOURCE_DIR}/libexamples/mmg2d/squareGeneration_example2/carretest.mesh"
-        "${CTEST_OUTPUT_DIR}/libmmg2d_Generation_2-carre.o"
-       )
-      ADD_TEST(NAME libmmg2d_example3_io_0   COMMAND ${LIBMMG2D_EXEC3}
-        "${PROJECT_SOURCE_DIR}/libexamples/mmg2d/io_multisols_example3/naca-multiSols.mesh"
-        "${CTEST_OUTPUT_DIR}/libmmg2d_io_3-naca.o" "0"
-       )
-      ADD_TEST(NAME libmmg2d_example3_io_1   COMMAND ${LIBMMG2D_EXEC3}
-        "${PROJECT_SOURCE_DIR}/libexamples/mmg2d/io_multisols_example3/naca-multiSols.mesh"
-        "${CTEST_OUTPUT_DIR}/libmmg2d_io_3-naca.o" "1"
-       )
-      ADD_TEST(NAME test_api2d_0   COMMAND ${TEST_API2D_EXEC0}
-        "${MMG2D_CI_TESTS}/API_tests/2dom.mesh"
-        "${CTEST_OUTPUT_DIR}/test_API2d.o"
-       )
-
-
-      IF ( CMAKE_Fortran_COMPILER)
-        SET(LIBMMG2D_EXECFORTRAN_a ${EXECUTABLE_OUTPUT_PATH}/libmmg2d_fortran_a )
-        SET(LIBMMG2D_EXECFORTRAN_b ${EXECUTABLE_OUTPUT_PATH}/libmmg2d_fortran_b )
-        SET(LIBMMG2D_EXECFORTRAN_IO ${EXECUTABLE_OUTPUT_PATH}/libmmg2d_fortran_io )
-        SET(TEST_API2D_FORTRAN_EXEC0 ${EXECUTABLE_OUTPUT_PATH}/test_api2d_fortran_0)
-
-
-        ADD_TEST(NAME libmmg2d_fortran_a   COMMAND ${LIBMMG2D_EXECFORTRAN_a}
-          "${PROJECT_SOURCE_DIR}/libexamples/mmg2d/adaptation_example0_fortran/example0_a/init.mesh"
-          "${CTEST_OUTPUT_DIR}/libmmg2d-Adaptation_Fortran_0_a-init.o"
-         )
-        ADD_TEST(NAME libmmg2d_fortran_b   COMMAND ${LIBMMG2D_EXECFORTRAN_b}
-          "${CTEST_OUTPUT_DIR}/libmmg2d_Adaptation_Fortran_0_b.o"
-         )
-        ADD_TEST(NAME libmmg2d_fortran_io_0   COMMAND ${LIBMMG2D_EXECFORTRAN_IO}
-          "${PROJECT_SOURCE_DIR}/libexamples/mmg2d/io_multisols_example3/naca-multiSols.mesh"
-          "${CTEST_OUTPUT_DIR}/libmmg2d_Fortran_io-naca.o" "0"
-         )
-        ADD_TEST(NAME libmmg2d_fortran_io_1   COMMAND ${LIBMMG2D_EXECFORTRAN_IO}
-          "${PROJECT_SOURCE_DIR}/libexamples/mmg2d/io_multisols_example3/naca-multiSols.mesh"
-          "${CTEST_OUTPUT_DIR}/libmmg2d_Fortran_io-naca.o" "1"
-          )
-        ADD_TEST(NAME test_api2d_fortran_0   COMMAND ${TEST_API2D_FORTRAN_EXEC0}
-          "${MMG2D_CI_TESTS}/API_tests/2dom.mesh"
-          "${CTEST_OUTPUT_DIR}/test_API2d.o"
-          )
-
-      ENDIF()
-
-    ENDIF()
+    SET ( EXECUT_MMG2D      $<TARGET_FILE:${PROJECT_NAME}2d> )
 
     IF ( ONLY_VERY_SHORT_TESTS )
+      # Add tests that doesn't require to download meshes
       SET ( CTEST_OUTPUT_DIR ${PROJECT_BINARY_DIR}/TEST_OUTPUTS )
 
       ADD_TEST(NAME mmg2d_very_short COMMAND ${EXECUT_MMG2D}
@@ -251,8 +196,9 @@ IF ( BUILD_TESTING )
         "${CTEST_OUTPUT_DIR}/libmmg2d_Adaptation_0_a-init.o"
         )
     ELSE ( )
-      # Add mmg2d tests
-      INCLUDE( ${PROJECT_SOURCE_DIR}/cmake/testing/mmg2d_tests.cmake )
+      # Add mmg2d tests that require to download meshes
+      INCLUDE( mmg2d_tests )
+
     ENDIF ( )
 
   ENDIF( MMG2D_CI )

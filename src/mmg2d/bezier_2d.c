@@ -20,20 +20,87 @@
 **  use this copy of the mmg distribution only if you accept them.
 ** =============================================================================
 */
-#include "mmg2d.h"
+#include "libmmg2d_private.h"
 
-// extern char ddb;
+// extern int8_t ddb;
 
 /* Check if triangle k should be split based on geometric and rough edge length considerations */
-int MMG2D_chkedg(MMG5_pMesh mesh, int k) {
+int MMG2D_chkedg(MMG5_pMesh mesh, MMG5_int k) {
   MMG5_pTria        pt;
   MMG5_pPoint       p1,p2;
-  double            hausd,hmax,ps,cosn,ux,uy,ll,li,t1[2],t2[2];
-  char              i,i1,i2;
+  MMG5_pPar         par;
+  double            hausd[3],hmax[3],ps,cosn,ux,uy,ll,li,t1[2],t2[2];
+  int               l;
+  int8_t            i,i1,i2,fill;
 
   pt = &mesh->tria[k];
-  hausd = mesh->info.hausd;
-  hmax = mesh->info.hmax;
+  hausd[0] = hausd[1] = hausd[2] = mesh->info.hausd;
+  hmax[0]  = hmax[1]  = hmax[2]  = mesh->info.hmax;
+
+  /* Local parameters for pt and k */
+  int8_t isloc = 0;
+
+  if ( mesh->info.parTyp & MG_Tria ) {
+    for ( l=0; l<mesh->info.npar; ++l ) {
+      par = &mesh->info.par[l];
+
+      if ( par->elt != MMG5_Triangle )  continue;
+      if ( par->ref != pt->ref ) continue;
+
+      hmax[0]  = hmax[1]  = hmax[2]  = par->hmax;
+      hausd[0] = hausd[1] = hausd[2] = par->hausd;
+      isloc = 1;
+      break;
+    }
+  }
+
+  fill = 0;
+  if ( mesh->info.parTyp & MG_Edge ) {
+    if ( isloc ) {
+      for ( l=0; l<mesh->info.npar; ++l ) {
+        par = &mesh->info.par[l];
+
+        if ( par->elt != MMG5_Edg )  continue;
+
+        for (i=0; i<3; i++) {
+          if ( par->ref != pt->edg[i] ) continue;
+
+          hmax[i]  = MG_MIN(hmax[i],par->hmax);
+          hausd[i] = MG_MIN(hausd[i],par->hausd);
+
+          MG_SET(fill,i);
+        }
+
+        /* Stop the loop over local parameters if all edges have been found */
+        if ( fill == 7 ) {
+          break;
+        }
+
+      }
+    }
+    else {
+      for ( l=0; l<mesh->info.npar; ++l ) {
+        par = &mesh->info.par[l];
+
+        if ( par->elt != MMG5_Edg )  continue;
+
+        for (i=0; i<3; i++) {
+          if ( par->ref != pt->edg[i] ) continue;
+
+          hmax[i]  = par->hmax;
+          hausd[i] = par->hausd;
+
+          MG_SET(fill,i);
+        }
+
+        /* Stop the loop over local parameters if all edges have been found */
+        if ( fill == 7 ) {
+          break;
+        }
+      }
+    }
+  }
+
 
   /* Analyze the three edges of k */
   for (i=0; i<3; i++) {
@@ -49,7 +116,7 @@ int MMG2D_chkedg(MMG5_pMesh mesh, int k) {
     ll = ux*ux + uy*uy;
 
     /* Long edges should be split */
-    if ( ll > hmax*hmax ) {
+    if ( ll > hmax[i]*hmax[i] ) {
       MG_SET(pt->flag,i);
       continue;
     }
@@ -57,7 +124,8 @@ int MMG2D_chkedg(MMG5_pMesh mesh, int k) {
     else if ( ll < MMG5_EPSD ) continue;
 
     /* Split non geometric edges connecting two parts of the border */
-    else if ( !MG_EDG(pt->tag[i]) && p1->tag > MG_NOTAG && p2->tag > MG_NOTAG ) {
+    else if ( mesh->info.fem &&
+              ( (!MG_EDG(pt->tag[i])) && (p1->tag > MG_NOTAG) && (p2->tag > MG_NOTAG)) ) {
       MG_SET(pt->flag,i);
       continue;
     }
@@ -66,7 +134,7 @@ int MMG2D_chkedg(MMG5_pMesh mesh, int k) {
     if ( !MG_EDG(pt->tag[i]) ) continue;
 
     /* Collect tangent vectors at both endpoints; remark t1 and t2 need not be oriented in the same fashion */
-    if ( MG_SIN(p1->tag) || (p1->tag & MG_NOM) ) {
+    if ( (MG_CRN & p1->tag) || (p1->tag & MG_NOM) ) {
       li = 1.0 / sqrt(ll);
       t1[0] = li*ux;
       t1[1] = li*uy;
@@ -76,7 +144,7 @@ int MMG2D_chkedg(MMG5_pMesh mesh, int k) {
       t1[1] = p1->n[0];
     }
 
-    if ( MG_SIN(p2->tag) || (p2->tag & MG_NOM) ) {
+    if ( (MG_CRN & p2->tag) || (p2->tag & MG_NOM) ) {
       li = 1.0 / sqrt(ll);
       t2[0] = li*ux;
       t2[1] = li*uy;
@@ -92,7 +160,7 @@ int MMG2D_chkedg(MMG5_pMesh mesh, int k) {
     cosn = ps/ll ;
     cosn *= (1.0-cosn);
     cosn *= ll;
-    if ( cosn > 9.0*hausd*hausd ) {   // Not so sure about that 9.0
+    if ( cosn > 9.0*hausd[i]*hausd[i] ) {   // Not so sure about that 9.0
       MG_SET(pt->flag,i);
       continue;
     }
@@ -102,7 +170,7 @@ int MMG2D_chkedg(MMG5_pMesh mesh, int k) {
     cosn = ps/ll ;
     cosn *= (1.0-cosn);
     cosn *= ll;
-    if ( cosn > 9.0*hausd*hausd ) {
+    if ( cosn > 9.0*hausd[i]*hausd[i] ) {
       MG_SET(pt->flag,i);
       continue;
     }
@@ -114,11 +182,11 @@ int MMG2D_chkedg(MMG5_pMesh mesh, int k) {
 
 /* Calculate coordinates o[2] and interpolated normal vector no[2] of a new point
  situated at parametric distance s from i1 = inxt2[i] */
-int MMG2D_bezierCurv(MMG5_pMesh mesh,int k,char i,double s,double *o,double *no) {
+int MMG2D_bezierCurv(MMG5_pMesh mesh,MMG5_int k,int8_t i,double s,double *o,double *no) {
   MMG5_pTria         pt;
   MMG5_pPoint        p1,p2;
   double             b1[2],b2[2],t1[2],t2[2],n1[2],n2[2],bn[2],ux,uy,ll,li,ps;
-  char               i1,i2;
+  int8_t             i1,i2;
 
   pt = &mesh->tria[k];
   if ( !MG_EOK(pt) ) return 0;
@@ -143,7 +211,7 @@ int MMG2D_bezierCurv(MMG5_pMesh mesh,int k,char i,double s,double *o,double *no)
   if ( ll < MMG5_EPSD ) return 0;
 
   /* Recover normal and tangent vectors */
-  if ( MG_SIN(p1->tag) || (p1->tag & MG_NOM) ) {
+  if ( (MG_CRN & p1->tag) || (p1->tag & MG_NOM) ) {
     li = 1.0 / sqrt(ll);
     t1[0] = li*ux;
     t1[1] = li*uy;
@@ -159,7 +227,7 @@ int MMG2D_bezierCurv(MMG5_pMesh mesh,int k,char i,double s,double *o,double *no)
     t1[1] = p1->n[0];
   }
 
-  if ( MG_SIN(p2->tag) || (p2->tag & MG_NOM) ) {
+  if ( (MG_CRN & p2->tag) || (p2->tag & MG_NOM) ) {
     li = 1.0 / sqrt(ll);
     t2[0] = li*ux;
     t2[1] = li*uy;
@@ -177,14 +245,14 @@ int MMG2D_bezierCurv(MMG5_pMesh mesh,int k,char i,double s,double *o,double *no)
 
   /* When either p1 or p2 is singular, make orientation of both normal vectors consistent
    (otherwise, it is already the case) */
-  if ( MG_SIN(p1->tag) || (p1->tag & MG_NOM) ){
+  if ( (MG_CRN & p1->tag) || (p1->tag & MG_NOM) ){
     ps = n1[0]*n2[0] + n1[1]*n2[1];
     if ( ps < 0.0 ) {
       n1[0] *= -1.0;
       n1[1] *= -1.0;
     }
   }
-  else if ( MG_SIN(p2->tag) || (p2->tag & MG_NOM) ) {
+  else if ( (MG_CRN & p2->tag) || (p2->tag & MG_NOM) ) {
     ps = n1[0]*n2[0] + n1[1]*n2[1];
     if ( ps < 0.0 ) {
       n2[0] *= -1.0;

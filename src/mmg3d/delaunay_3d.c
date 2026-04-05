@@ -28,13 +28,13 @@
  * \author Pascal Frey (UPMC)
  * \version 5
  * \copyright GNU Lesser General Public License.
- * \remark Delaunay mode only (\a PATTERN flag set to \a OFF).
+ * \remark Delaunay mode only (\a MMG_PATTERN flag set to \a OFF).
  * \todo doxygen documentation.
  */
 
-#include "inlined_functions_3d.h"
+#include "inlined_functions_3d_private.h"
 
-#ifndef PATTERN
+#ifndef MMG_PATTERN
 
 #define MMG3D_EPSRAD       1.00005
 /* For Various_adpsol_hgrad1_M6Mach_Eps0.001_hmin0.001_hmax2 test case:
@@ -52,8 +52,9 @@
 #define MMG3D_KTC    13
 
 /* hash mesh edge v[0],v[1] (face i of iel) */
-int MMG5_hashEdgeDelone(MMG5_pMesh mesh,MMG5_Hash *hash,int iel,int i,int *v) {
-  int             *adja,iadr,jel,j,key,mins,maxs;
+int MMG5_hashEdgeDelone(MMG5_pMesh mesh,MMG5_Hash *hash,MMG5_int iel,int i,MMG5_int *v) {
+  MMG5_int       key,*adja,iadr,jel,mins,maxs;
+  int            j;
   MMG5_hedge     *ha;
 
   /* compute key */
@@ -65,8 +66,7 @@ int MMG5_hashEdgeDelone(MMG5_pMesh mesh,MMG5_Hash *hash,int iel,int i,int *v) {
     mins = v[1];
     maxs = v[0];
   }
-  key = MMG3D_KTA*mins + MMG3D_KTB*maxs;
-  key = key % hash->siz;
+  key = (MMG3D_KTA*(int64_t)mins + MMG3D_KTB*(int64_t)maxs)%hash->siz;
   ha  = &hash->item[key];
 
   if ( ha->a ) {
@@ -80,7 +80,7 @@ int MMG5_hashEdgeDelone(MMG5_pMesh mesh,MMG5_Hash *hash,int iel,int i,int *v) {
       j    = ha->k % 4;
       iadr = (jel-1)*4 + 1;
       adja = &mesh->adja[iadr];
-      adja[j] = iel*4 + i;
+      adja[j] = iel*4 + (MMG5_int)i;
       return 1;
     }
     else {
@@ -95,7 +95,7 @@ int MMG5_hashEdgeDelone(MMG5_pMesh mesh,MMG5_Hash *hash,int iel,int i,int *v) {
           j    = ha->k % 4;
           iadr = (jel-1)*4 + 1;
           adja = &mesh->adja[iadr];
-          adja[j] = iel*4 + i;
+          adja[j] = iel*4 + (MMG5_int)i;
           return 1;
         }
       }
@@ -104,12 +104,12 @@ int MMG5_hashEdgeDelone(MMG5_pMesh mesh,MMG5_Hash *hash,int iel,int i,int *v) {
     ha        = &hash->item[hash->nxt];
     ha->a     = mins;
     ha->b     = maxs;
-    ha->k     = iel*4 + i;
+    ha->k     = iel*4 + (MMG5_int)i;
     hash->nxt = ha->nxt;
     ha->nxt   = 0;
 
     if ( hash->nxt >= hash->max ) {
-      MMG5_TAB_RECALLOC(mesh,hash->item,hash->max,0.2,MMG5_hedge,"face",
+      MMG5_TAB_RECALLOC(mesh,hash->item,hash->max,MMG5_GAP,MMG5_hedge,"face",
                          return 0;);
       for (j=hash->nxt; j<hash->max; j++)  hash->item[j].nxt = j+1;
     }
@@ -119,17 +119,17 @@ int MMG5_hashEdgeDelone(MMG5_pMesh mesh,MMG5_Hash *hash,int iel,int i,int *v) {
   /* insert */
   ha->a = mins;
   ha->b = maxs;
-  ha->k = iel*4 + i;
+  ha->k = iel*4 + (MMG5_int)i;
   ha->nxt = 0;
 
   return 1;
 }
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param sol pointer toward the solution structure.
+ * \param mesh pointer to the mesh structure.
+ * \param sol pointer to the solution structure.
  * \param ip index of the point to insert.
- * \param list pointer toward the list of the tetra in the cavity (computed by
+ * \param list pointer to the list of the tetra in the cavity (computed by
  * \ref MMG5_cavity).
  * \param ilist number of tetra inside the cavity.
  * \return 1 if sucess, 0 or -1 if fail.
@@ -137,19 +137,20 @@ int MMG5_hashEdgeDelone(MMG5_pMesh mesh,MMG5_Hash *hash,int iel,int i,int *v) {
  * Insertion of the vertex \a ip. The cavity of \a ip become its ball.
  *
  */
-int MMG5_delone(MMG5_pMesh mesh,MMG5_pSol sol,int ip,int *list,int ilist) {
+int MMG5_delone(MMG5_pMesh mesh,MMG5_pSol sol,MMG5_int ip,int64_t *list,int ilist) {
   MMG5_pPoint   ppt;
   MMG5_pTetra   pt,pt1;
   MMG5_xTetra   xt;
   MMG5_pxTetra  pxt0;
-  int          *adja,*adjb,i,j,k,l,m,iel,jel,old,v[3],iadr,base,size;
-  int           vois[4],iadrold;
+  MMG5_int      base,*adja,*adjb,iel,jel,old,v[3],iadr;
+  int           i,j,k,l,m,size;
+  MMG5_int      vois[4],iadrold,ielnum[3*MMG3D_LONMAX+1];
   short         i1;
   char          alert;
-  int           isused = 0,ixt,ielnum[3*MMG3D_LONMAX+1],ll;
-  MMG5_Hash    hedg;
+  int           isused = 0,ixt;
+  MMG5_Hash     hedg;
 #ifndef NDEBUG
-  int tref;
+  MMG5_int      tref;
 #endif
 
   base = mesh->base;
@@ -212,10 +213,6 @@ int MMG5_delone(MMG5_pMesh mesh,MMG5_pSol sol,int ip,int *list,int ilist) {
       MMG3D_TETRA_REALLOC(mesh,ielnum[k],mesh->gap,
                           fprintf(stderr,"\n  ## Error: %s: unable to allocate a"
                                   " new element.\n",__func__);
-                          for(ll=1 ; ll<k ; ll++) {
-                            mesh->tetra[ielnum[ll]].v[0] = 1;
-                            if ( !MMG3D_delElt(mesh,ielnum[ll]) )  return -1;
-                          }
                           return -1);
     }
   }
@@ -279,7 +276,7 @@ int MMG5_delone(MMG5_pMesh mesh,MMG5_pSol sol,int ip,int *list,int ilist) {
             } else {
               mesh->xt++;
               if ( mesh->xt > mesh->xtmax ) {
-                MMG5_TAB_RECALLOC(mesh,mesh->xtetra,mesh->xtmax,0.2,MMG5_xTetra,
+                MMG5_TAB_RECALLOC(mesh,mesh->xtetra,mesh->xtmax,MMG5_GAP,MMG5_xTetra,
                                    "larger xtetra table",
                                    mesh->xt--;
                                    fprintf(stderr,"  Exit program.\n"); return -1;);
@@ -339,8 +336,8 @@ int MMG5_delone(MMG5_pMesh mesh,MMG5_pSol sol,int ip,int *list,int ilist) {
 }
 
 /**
- * \param mesh pointer toward the mesh structure
- * \param met pointer toward the met structure
+ * \param mesh pointer to the mesh structure
+ * \param met pointer to the met structure
  * \param ip index of the point to insert
  * \param list poiner toward the cavity of the point
  * \param ilist number of elts in the cavity
@@ -352,14 +349,15 @@ int MMG5_delone(MMG5_pMesh mesh,MMG5_pSol sol,int ip,int *list,int ilist) {
  * Cavity correction for quality (aniso).
  *
  */
-static int MMG5_correction_ani(MMG5_pMesh mesh,MMG5_pSol met,int ip,int* list,
+static int MMG5_correction_ani(MMG5_pMesh mesh,MMG5_pSol met,int ip,int64_t* list,
                                 int ilist,int nedep,double volmin) {
-  MMG5_pPoint        ppt,p1,p2,p3;
-  MMG5_pTetra        pt;
+  MMG5_pPoint   ppt,p1,p2,p3;
+  MMG5_pTetra   pt;
   double        dd,det,nn,eps,eps2,ux,uy,uz,vx,vy,vz,v1,v2,v3;
   double        *ma,*mb,*mc,*md,mm[6],h1,h2,h3;
-  int           *adja,i,j,ipil,iel,lon,iadr,adj,ib,ic,id,base,ncor;
-  int           vois[4];
+  MMG5_int      *adja,i,j,iel,iadr,adj,ib,ic,id;
+  MMG5_int      base,vois[4];
+  int           ipil,lon,ncor;
 
   ppt  = &mesh->point[ip];
   if ( ppt->tag & MG_NUL )  return ilist;
@@ -464,8 +462,8 @@ static int MMG5_correction_ani(MMG5_pMesh mesh,MMG5_pSol met,int ip,int* list,
 
 
 /**
- * \param mesh pointer toward the mesh structure
- * \param met pointer toward the met structure
+ * \param mesh pointer to the mesh structure
+ * \param met pointer to the met structure
  * \param ip index of the point to insert
  * \param list poiner toward the cavity of the point
  * \param ilist number of elts in the cavity
@@ -478,12 +476,13 @@ static int MMG5_correction_ani(MMG5_pMesh mesh,MMG5_pSol met,int ip,int* list,
  *
  */
 static int
-MMG5_correction_iso(MMG5_pMesh mesh,int ip,int *list,int ilist,int nedep,double volmin) {
+MMG5_correction_iso(MMG5_pMesh mesh,int ip,int64_t *list,int ilist,int nedep,double volmin) {
   MMG5_pPoint ppt,p1,p2,p3;
   MMG5_pTetra      pt;
   double           dd,nn,eps,eps2,ux,uy,uz,vx,vy,vz,v1,v2,v3;
-  int             *adja,i,ipil,iel,lon,iadr,adj,ib,ic,id,base,ncor;
-  int              vois[4];
+  MMG5_int         *adja,i,iel,iadr,adj,ib,ic,id;
+  MMG5_int         base,vois[4];
+  int              ncor,ipil,lon;
 
   ppt  = &mesh->point[ip];
   if ( ppt->tag & MG_NUL )  return ilist;
@@ -566,11 +565,11 @@ MMG5_correction_iso(MMG5_pMesh mesh,int ip,int *list,int ilist,int nedep,double 
 
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param met pointer toward the sol structure.
+ * \param mesh pointer to the mesh structure.
+ * \param met pointer to the sol structure.
  * \param iel tetra index.
  * \param ip point local index in \a iel.
- * \param list pointer toward the list of tetra in the shell of edge where
+ * \param list pointer to the list of tetra in the shell of edge where
  * ip will be inserted.
  * \param lon number of tetra in the list.
  * \return ilist number of tetra inside the cavity or -ilist if one of the tet
@@ -579,13 +578,14 @@ MMG5_correction_iso(MMG5_pMesh mesh,int ip,int *list,int ilist,int nedep,double 
  * Mark elements in cavity and update the list of tetra in the cavity.
  *
  */
-int MMG5_cavity_ani(MMG5_pMesh mesh,MMG5_pSol met,int iel,int ip,int* list,int lon,double volmin) {
+int MMG5_cavity_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_int iel,int ip,int64_t* list,int lon,double volmin) {
   MMG5_pPoint    ppt;
   MMG5_pTetra    pt,pt1;
-  double    c[3],eps,dd,ray,ux,uy,uz,crit;
-  double    *mj,*mp,ct[12];
-  int       *adja,*adjb,k,adj,adi,voy,i,j,ia,ilist,ipil,jel,iadr,base;
-  int       vois[4],l,isreq,tref;
+  double         c[3],eps,dd,ray,ux,uy,uz,crit;
+  double         *mj,*mp,ct[12];
+  MMG5_int       *adja,*adjb,adj,adi,ia,jel,iadr;
+  MMG5_int       base,vois[4],tref;
+  int            k,voy,ilist,ipil,i,j,isreq,l;
 
   if ( lon < 1 )  return 0;
   ppt = &mesh->point[ip];
@@ -725,11 +725,11 @@ int MMG5_cavity_ani(MMG5_pMesh mesh,MMG5_pSol met,int iel,int ip,int* list,int l
 
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param sol pointer toward the sol structure.
+ * \param mesh pointer to the mesh structure.
+ * \param sol pointer to the sol structure.
  * \param iel tetra index.
  * \param ip point local index in \a iel.
- * \param list pointer toward the list of tetra in the shell of edge where
+ * \param list pointer to the list of tetra in the shell of edge where
  * ip will be inserted.
  * \param lon number of tetra in the list.
  * \return ilist number of tetra inside the cavity or -ilist if one of the tet
@@ -738,13 +738,14 @@ int MMG5_cavity_ani(MMG5_pMesh mesh,MMG5_pSol met,int iel,int ip,int* list,int l
  * Mark elements in cavity and update the list of tetra in the cavity.
  *
  */
-int MMG5_cavity_iso(MMG5_pMesh mesh,MMG5_pSol sol,int iel,int ip,int *list,int lon,double volmin) {
+int MMG5_cavity_iso(MMG5_pMesh mesh,MMG5_pSol sol,MMG5_int iel,int ip,int64_t *list,int lon,double volmin) {
   MMG5_pPoint      ppt;
   MMG5_pTetra      pt,pt1;
   double           c[3],crit,dd,eps,ray,ct[12];
-  int             *adja,*adjb,k,adj,adi,voy,i,j,ilist,ipil,jel,iadr,base;
-  int              vois[4],l;
-  int              tref,isreq;
+  MMG5_int         *adja,*adjb,adj,adi,jel,iadr;
+  MMG5_int         tref,base,vois[4],l;
+  int              isreq;
+  int              voy,i,j,k,ipil,ilist;
 
   if ( lon < 1 )  return 0;
   ppt = &mesh->point[ip];

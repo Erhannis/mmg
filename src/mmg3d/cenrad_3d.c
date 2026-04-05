@@ -28,12 +28,12 @@
  * \date 2013
  * \version 5
  * \copyright GNU Lesser General Public License.
- * \remark Delaunay mode only (\a PATTERN flag set to \a OFF).
+ * \remark Delaunay mode only (\a MMG_PATTERN flag set to \a OFF).
  */
 
-#include "mmg3d.h"
+#include "libmmg3d_private.h"
 /**
- * \param mesh pointer toward the mesh structure.
+ * \param mesh pointer to the mesh structure.
  * \param ct coordinates of vertices of the element.
  * \param c center of circumscribing circle to the element.
  * \param rad squared radius of circumscribing circle to the element.
@@ -55,7 +55,11 @@ int MMG5_cenrad_iso(MMG5_pMesh mesh,double *ct,double *c,double *rad) {
   uy = c4[1] - c1[1];
   uz = c4[2] - c1[2];
 
-  dd = 1.0 / sqrt(ux*ux + uy*uy + uz*uz);
+  dd = ux*ux + uy*uy + uz*uz;
+  if ( dd < MMG5_EPSD2 )  return 0;
+
+  dd = 1.0 / sqrt(dd);
+
   n1[0] = ux*dd;
   n1[1] = uy*dd;
   n1[2] = uz*dd;
@@ -68,7 +72,11 @@ int MMG5_cenrad_iso(MMG5_pMesh mesh,double *ct,double *c,double *rad) {
   uy = c4[1] - c2[1];
   uz = c4[2] - c2[2];
 
-  dd = 1.0 / sqrt(ux*ux + uy*uy + uz*uz);
+  dd = ux*ux + uy*uy + uz*uz;
+  if ( dd < MMG5_EPSD2 )  return 0;
+
+  dd = 1.0 / sqrt(dd);
+
   n2[0] = ux*dd;
   n2[1] = uy*dd;
   n2[2] = uz*dd;
@@ -79,7 +87,11 @@ int MMG5_cenrad_iso(MMG5_pMesh mesh,double *ct,double *c,double *rad) {
   uy = c4[1] - c3[1];
   uz = c4[2] - c3[2];
 
-  dd = 1.0 / sqrt(ux*ux + uy*uy + uz*uz);
+  dd = ux*ux + uy*uy + uz*uz;
+  if ( dd < MMG5_EPSD2 )  return 0;
+
+  dd = 1.0 / sqrt(dd);
+
   n3[0] = ux*dd;
   n3[1] = uy*dd;
   n3[2] = uz*dd;
@@ -116,7 +128,7 @@ int MMG5_cenrad_iso(MMG5_pMesh mesh,double *ct,double *c,double *rad) {
 }
 
 /**
- * \param mesh pointer toward the mesh structure.
+ * \param mesh pointer to the mesh structure.
  * \param ct coordinates of vertices of the element.
  * \param m metric at the point for which we compute the cavity.
  * \param c center of circumscribing circle to the element.

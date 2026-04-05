@@ -20,7 +20,7 @@
 **  use this copy of the mmg distribution only if you accept them.
 ** =============================================================================
 */
-#include "mmg2d.h"
+#include "libmmg2d_private.h"
 
 #define  MMG2D_AREAMIN      1e-15 //1e-20 failed : creation of too bad element
 
@@ -28,11 +28,12 @@
 #define KTB    11
 
 /* Cavity correction for quality */
-static int MMG2D_correction_iso(MMG5_pMesh mesh,int ip,int *list,int ilist,int nedep) {
+static int MMG2D_correction_iso(MMG5_pMesh mesh,MMG5_int ip,MMG5_int *list,int ilist,int nedep) {
   MMG5_pTria      pt;
   MMG5_pPoint     ppt,p1,p2;
-  double           dd,ux,uy,vx,vy;
-  int             *adja,i,ipil,iel,lon,iadr,adj,ib,ic,base,ncor,nei[3];
+  double          dd,ux,uy,vx,vy;
+  MMG5_int        *adja,iel,iadr,adj,ib,ic,ncor,nei[3],base;
+  int             lon,i,ipil;
 
   ppt  = &mesh->point[ip];
   if ( !MG_VOK(ppt) )  return ilist;
@@ -90,94 +91,69 @@ static int MMG2D_correction_iso(MMG5_pMesh mesh,int ip,int *list,int ilist,int n
   return lon;
 }
 
-/* Hashing routine for maintaining adjacencies during Delaunization; hash mesh edge v[0],v[1] (face i of iel) */
-int MMG2D_hashEdgeDelone(MMG5_pMesh mesh,HashTable *hash,int iel,int i,int *v) {
-  int             *adja,iadr,jel,j,key,mins,maxs;
-  Hedge           *ha;
-  static char     mmgWarn0=0;
+/**
+ * \param mesh pointer to the mesh structure
+ * \param hash pointer to the hash table structure
+ * \param iel index of triangle
+ * \param i index of the face of the element
+ *
+ * \return 0 if fail, 1 if success
+ *
+ * Update of the adjacency relationships adjacencies: hash mesh edge
+ * \f$v[0],v[1]\f$ (face \a i of \a iel) and fill the adjacency arrays if the
+ * face has already been seen.
+ *
+ */
+static int MMG2D_hashEdgeDelone(MMG5_pMesh mesh,MMG5_Hash *hash,MMG5_int iel,int i) {
+  MMG5_pTria      pt;
+  MMG5_int        *adja,iadr,jel,ip1,ip2;
+  int             j;
+  int16_t         i1,i2;
 
-  /* Compute key */
-  if ( v[0] < v[1] ) {
-    mins = v[0];
-    maxs = v[1];
-  }
-  else {
-    mins = v[1];
-    maxs = v[0];
-  }
+  pt  = &mesh->tria[iel];
+  i1  = MMG5_inxt2[i];
+  i2  = MMG5_iprv2[i];
+  ip1 = pt->v[i1];
+  ip2 = pt->v[i2];
 
-  key = KTA*mins + KTB*maxs;
-  key = key % hash->size;
-  ha  = &hash->item[key];
+  /* Search if the face is already hashed */
+  jel = MMG5_hashGet(hash,ip1,ip2);
 
-  if ( ha->min ) {
-    /* identical face */
-    if ( ha->min == mins && ha->max == maxs ) {
-      iadr = (iel-1)*3 + 1;
-      adja = &mesh->adja[iadr];
-      adja[i] = ha->iel;
-
-      jel  = ha->iel /3;
-      j    = ha->iel % 3;
-      iadr = (jel-1)*3 + 1;
-      adja = &mesh->adja[iadr];
-      adja[j] = iel*3 + i;
-      return 1;
-    }
-    else {
-      while ( ha->nxt && ha->nxt < hash->nxtmax ) {
-        ha = &hash->item[ha->nxt];
-        if ( ha->min == mins && ha->max == maxs ) {
-          iadr = (iel-1)*3 + 1;
-          adja = &mesh->adja[iadr];
-          adja[i] = ha->iel;
-
-          jel  = ha->iel /3;
-          j    = ha->iel % 3;
-          iadr = 3*(jel-1) + 1;
-          adja = &mesh->adja[iadr];
-          adja[j] = 3*iel+i;
-          return 1;
-        }
-      }
-    }
-    ha->nxt   = hash->hnxt;
-    ha        = &hash->item[hash->hnxt];
-    ha->min     = mins;
-    ha->max     = maxs;
-    ha->iel     = iel*3 + i;
-    hash->hnxt = ha->nxt;
-    ha->nxt   = 0;
-
-    if ( hash->hnxt >= hash->nxtmax ) {
-      if(mesh->info.imprim > 6) {
-        if ( !mmgWarn0 ) {
-          mmgWarn0 = 1;
-          fprintf(stderr,"\n  ## Warning: %s: overflow.\n",__func__);
-        }
-      }
+  if ( !jel ) {
+    /* if not, hash the edge and store its unique key */
+    jel = MMG5_hashEdge(mesh,hash,ip1,ip2,3*iel+i);
+    if ( !jel ) {
+      printf("  # Error: %s: Unable to add edge %" MMG5_PRId " %" MMG5_PRId " within the hash table\n",
+             __func__,MMG2D_indPt(mesh,ip1),MMG2D_indPt(mesh,ip2));
       return 0;
     }
-    return 1;
   }
+  else {
+    /* otherwise, update the adjacency array */
+    iadr = (iel-1)*3 + 1;
+    adja = &mesh->adja[iadr];
+    adja[i] = jel;
 
-  /* If ha->man does not exist, insert it in the hash table */
-  ha->min = mins;
-  ha->max = maxs;
-  ha->iel = 3*iel+i;
-  ha->nxt = 0;
+    j    = jel % 3;
+    jel /= 3;
+    iadr = (jel-1)*3 + 1;
+    adja = &mesh->adja[iadr];
+    adja[j] = iel*3 + i;
+  }
 
   return 1;
 }
 
 /**  Create the cavity point ip, starting from triangle list[0];
      Return a negative value for ilist if one of the triangles of the cavity is required */
-int MMG2D_cavity(MMG5_pMesh mesh,MMG5_pSol sol,int ip,int *list) {
+int MMG2D_cavity(MMG5_pMesh mesh,MMG5_pSol sol,MMG5_int ip,MMG5_int *list) {
   MMG5_pTria      pt,pt1,ptc;
   MMG5_pPoint     ppt;
   double          c[2],crit,dd,eps,rad,ct[6];
-  int             *adja,*adjb,adj,adi,voy,i,j,ilist,ipil,jel,iadr,base,nei[3],l,tref; //isreq;
-  static char     mmgWarn0=0;
+  MMG5_int        tref,*adja,*adjb,adj,adi,jel,iadr,nei[3],l,base; //isreq;
+  int             voy,ilist,ipil;
+  int             i,j;
+  static int8_t   mmgWarn0=0;
 
   ppt = &mesh->point[ip];
   base  = ++mesh->base;
@@ -249,7 +225,7 @@ int MMG2D_cavity(MMG5_pMesh mesh,MMG5_pSol sol,int ip,int *list) {
         }
       }
     }
-    if ( ilist > MMG2D_LONMAX - 3 ) return -1;
+    if ( ilist > MMG5_TRIA_LMAX - 3 ) return -1;
 
     ++ipil;
   }
@@ -260,19 +236,32 @@ int MMG2D_cavity(MMG5_pMesh mesh,MMG5_pSol sol,int ip,int *list) {
   return ilist;
 }
 
-/* Insertion in point ip in the cavity described by list */
-int MMG2D_delone(MMG5_pMesh mesh,MMG5_pSol sol,int ip,int *list,int ilist) {
+/**
+ * \param mesh pointer to the mesh
+ * \param sol pointer to the solution (metric) structure
+ * \param ip index of point to insert
+ * \param list Cavity of the point \a ip.
+ * \param ilist number of trias in the cavity of \a ip.
+ *
+ * \return 0 if the point can't be inserted, -1 if lack of memory, 1 if success.
+ *
+ *  Insertion in point ip in the cavity described by list.
+ *
+ */
+int MMG2D_delone(MMG5_pMesh mesh,MMG5_pSol sol,MMG5_int ip,MMG5_int *list,int ilist) {
   MMG5_pTria      pt,pt1;
   MMG5_pPoint     ppt;
-  int             *adja,*adjb,i,j,k,iel,jel,old,v[2],iadr,base,size,nei[3],iadrold;
-  int             tref,ielnum[3*MMG2D_LONMAX+1];
+  MMG5_int        base,*adja,*adjb,iel,jel,old,iadr,size,nei[3],iadrold;
+  int             i,j,k;
+  MMG5_int        ielnum[3*MMG5_TRIA_LMAX+1],tref;
+  int8_t          ier;
   short           i1;
-  char            alert;
-  HashTable       hedg;
-  static char     mmgWarn0=0,mmgWarn1=0;
+  int8_t          alert;
+  MMG5_Hash       hedg;
+  static int8_t   mmgWarn0=0,mmgWarn1=0;
 
   /* Reset tagdel field */
-  for (k=1; k<=mesh->np; k++)
+  for (k=1; k<ilist; k++)
     mesh->point[k].tagdel = 0;
 
   /* Triangles in the cavity are those s.t. pt->base == base */
@@ -324,9 +313,9 @@ int MMG2D_delone(MMG5_pMesh mesh,MMG5_pSol sol,int ip,int *list,int ilist) {
   if ( alert )  return 0;
 
   /* Hash table parameters */
-  if ( size >= 3*MMG2D_LONMAX )  return 0;
-  if ( !MMG2D_hashNew(&hedg,size,3*size) ) { /*3*size is enough */
-    fprintf(stderr,"\n  ## Warning: %s: unable to complete mesh.\n",__func__);
+  if ( size >= 3*MMG5_TRIA_LMAX )  return 0;
+  if ( !MMG5_hashNew(mesh,&hedg,size,3*size) ) {
+    fprintf(stderr,"\n  ## Warning: %s: unable to allocate hash table.\n",__func__);
     return -1;
   }
 
@@ -389,9 +378,13 @@ int MMG2D_delone(MMG5_pMesh mesh,MMG5_pSol sol,int ip,int *list,int ilist) {
         /* Update adjacency via the internal faces */
         for (j=0; j<3; j++) {
           if ( j != i ) {
-            v[0] = pt1->v[ MMG5_inxt2[j] ];
-            v[1] = pt1->v[ MMG5_iprv2[j] ];
-            MMG2D_hashEdgeDelone(mesh,&hedg,iel,j,v);
+            ier = MMG2D_hashEdgeDelone(mesh,&hedg,iel,j);
+            if ( !ier ) {
+              fprintf(stderr,"  ## Warning: %s: unable to update adjacency"
+                      " relationship (elt %" MMG5_PRId ", edge %d).\n",
+                      __func__,MMG2D_indElt(mesh,iel),j);
+              return -1;
+            }
           }
         }
       }

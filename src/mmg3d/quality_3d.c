@@ -32,27 +32,29 @@
  * \copyright GNU Lesser General Public License.
  */
 
-#include "inlined_functions_3d.h"
+#include "libmmg3d.h"
+#include "inlined_functions_3d_private.h"
+#include "mmg3dexterns_private.h"
 
-extern char ddb;
+extern int8_t ddb;
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param met pointer toward the meric structure.
+ * \param mesh pointer to the mesh structure.
+ * \param met pointer to the meric structure.
  * \param metRidTyp metric storage (classic or special)
  * \return 1 if success, 0 if fail.
  *
  * Compute the quality of the tetras over the mesh.
  *
  */
-int MMG3D_tetraQual(MMG5_pMesh mesh, MMG5_pSol met,char metRidTyp) {
+int MMG3D_tetraQual(MMG5_pMesh mesh, MMG5_pSol met,int8_t metRidTyp) {
   MMG5_pTetra pt;
   double      minqual;
-  int         k,iel;
+  MMG5_int    k,iel;
 
   minqual = 2./MMG3D_ALPHAD;
 
-  /*compute tet quality*/
+  /* compute tet quality */
   iel = 1;
   for (k=1; k<=mesh->ne; k++) {
     pt = &mesh->tetra[k];
@@ -61,10 +63,27 @@ int MMG3D_tetraQual(MMG5_pMesh mesh, MMG5_pSol met,char metRidTyp) {
     if ( !metRidTyp && met->size == 6 && met->m ) {
       pt->qual = MMG5_caltet33_ani(mesh,met,pt);
     }
-    else
+    else if ( !(met && met->m) ) {
+      pt->qual = MMG5_caltet_iso(mesh,NULL,pt);
+    }
+    else {
       pt->qual = MMG5_orcal(mesh,met,k);
+    }
 
-    if ( pt->qual < minqual ) {
+    int i=0;
+    /* Once metric is stored using 'ridge' convention, a tetra with 4 ridge
+     * points has a 0 quality, ignore it for quality checks */
+    if ( metRidTyp ) {
+      for ( i=0; i<4; ++i ) {
+        MMG5_pPoint ppt = &mesh->point[pt->v[i]];
+        if ( (MG_SIN(ppt->tag) || MG_NOM & ppt->tag) || !(ppt->tag & MG_GEO) ) {
+          break;
+        }
+      }
+    }
+
+    /* Check quality on suitable elements */
+    if ( i < 4 && pt->qual < minqual ) {
       minqual = pt->qual;
       iel     = k;
     }
@@ -76,9 +95,9 @@ int MMG3D_tetraQual(MMG5_pMesh mesh, MMG5_pSol met,char metRidTyp) {
 }
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param met pointer toward the meric structure.
- * \param pt pointer toward a tetrahedra.
+ * \param mesh pointer to the mesh structure.
+ * \param met pointer to the meric structure.
+ * \param pt pointer to a tetrahedra.
  * \return The anisotropic quality of the tet or 0.0 if fail.
  *
  * Compute the quality of the tet pt with respect to the anisotropic metric \a
@@ -93,7 +112,8 @@ inline double MMG5_caltet33_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_pTetra pt) {
   double       h1,h2,h3,h4,h5,h6,det,vol,rap,v1,v2,v3,num;
   double       *a,*b,*c,*d;
   double       mm[6];
-  int          ip[4],iad0,iad1,iad2,iad3,k;
+  int          iad0,iad1,iad2,iad3;
+  MMG5_int     ip[4],k;
 
   ip[0] = pt->v[0];
   ip[1] = pt->v[1];
@@ -178,8 +198,8 @@ inline double MMG5_caltet33_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_pTetra pt) {
 
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param met pointer toward the metric structure.
+ * \param mesh pointer to the mesh structure.
+ * \param met pointer to the metric structure.
  * \param avlen average length (to fill).
  * \param lmin minimal length (to fill).
  * \param lmax max length (to fill).
@@ -199,25 +219,37 @@ inline double MMG5_caltet33_ani(MMG5_pMesh mesh,MMG5_pSol met,MMG5_pTetra pt) {
  *
  */
 int MMG3D_computePrilen( MMG5_pMesh mesh, MMG5_pSol met, double* avlen,
-                         double* lmin, double* lmax, int* ned, int* amin, int* bmin, int* amax,
-                         int* bmax, int* nullEdge, char metRidTyp, double** bd_in, int hl[9] )
+                         double* lmin, double* lmax, MMG5_int* ned, MMG5_int* amin,
+                         MMG5_int* bmin, MMG5_int* amax,
+                         MMG5_int* bmax, MMG5_int* nullEdge, int8_t metRidTyp,
+                         double** bd_in, MMG5_int hl[9] )
 {
   MMG5_pTetra     pt;
   MMG5_pPoint     ppt;
-  MMG5_Hash      hash;
+  MMG5_Hash       hash;
   double          len;
-  int             k,np,nq,n;
-  char            ia,i0,i1,ier,i;
+  MMG5_int        k,np,nq,n;
+  int8_t          ia,i0,i1,ier,i;
   static double   bd[9]= {0.0, 0.3, 0.6, 0.7071, 0.9, 1.3, 1.4142, 2.0, 5.0};
 
   *bd_in = bd;
-  memset(hl,0,9*sizeof(int));
+  memset(hl,0,9*sizeof(MMG5_int));
   *ned = 0;
   *avlen = 0.0;
   *lmax = 0.0;
   *lmin = 1.e30;
   *amin = *amax = *bmin = *bmax = 0;
   *nullEdge = 0;
+
+  if ( (!met) || (!met->m) ) {
+    /* the functions that computes the edge length cannot be called without an
+     * allocated metric */
+    return 0;
+  }
+
+  if ( !mesh->ne ) {
+    return 0;
+  }
 
   /* Hash all edges in the mesh */
   if ( !MMG5_hashNew(mesh,&hash,mesh->np,7*mesh->np) )  return 0;
@@ -263,9 +295,15 @@ int MMG3D_computePrilen( MMG5_pMesh mesh, MMG5_pSol met, double* avlen,
       ier = MMG5_hashPop(&hash,np,nq);
       if( ier ) {
         if ( (!metRidTyp) && met->size==6 && met->m ) {
+          // Warning: we may erroneously approximate the length of a curve
+          // boundary edge by the length of the straight edge if the "MG_BDY"
+          // tag is missing along the edge.
           len = MMG5_lenedg33_ani(mesh,met,ia,pt);
         }
         else
+          // Warning: we may erroneously approximate the length of a curve
+          // boundary edge by the length of the straight edge if the "MG_BDY"
+          // tag is missing along the edge.
           len = MMG5_lenedg(mesh,met,ia,pt);
 
 
@@ -307,8 +345,8 @@ int MMG3D_computePrilen( MMG5_pMesh mesh, MMG5_pSol met, double* avlen,
 
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param met pointer toward the metric structure.
+ * \param mesh pointer to the mesh structure.
+ * \param met pointer to the metric structure.
  * \param metRidTyp Type of storage of ridges metrics: 0 for classic storage,
  * 1 for special storage.
  * \return 0 if fail, 1 otherwise.
@@ -316,11 +354,11 @@ int MMG3D_computePrilen( MMG5_pMesh mesh, MMG5_pSol met, double* avlen,
  * Compute sizes of edges of the mesh, and displays histo.
  *
  */
-int MMG3D_prilen(MMG5_pMesh mesh, MMG5_pSol met, char metRidTyp) {
-
-  double avlen, lmin, lmax;
-  int    ned, amin, bmin, amax, bmax, nullEdge, hl[9];
-  double *bd;
+int MMG3D_prilen(MMG5_pMesh mesh, MMG5_pSol met, int8_t metRidTyp) {
+  double     avlen, lmin, lmax;
+  MMG5_int   ned, nullEdge;
+  MMG5_int   amin, bmin, amax, bmax, hl[9];
+  double     *bd;
 
   if (!MMG3D_computePrilen( mesh, met, &avlen, &lmin, &lmax, &ned, &amin,
                             &bmin, &amax, &bmax, &nullEdge, metRidTyp, &bd, hl ) )
@@ -335,28 +373,28 @@ int MMG3D_prilen(MMG5_pMesh mesh, MMG5_pSol met, char metRidTyp) {
 
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param met pointer toward the metric structure.
- * \param ne pointer toward the number of used tetra (to fill).
- * \param max pointer toward the maximal quality (normalized) to fill.
- * \param avg pointer toward the average quality (normalized) to fill.
- * \param min pointer toward the minimal quality (normalized) to fill.
- * \param iel pointer toward the index of the worst tetra (to fill).
+ * \param mesh pointer to the mesh structure.
+ * \param met pointer to the metric structure.
+ * \param ne pointer to the number of used tetra (to fill).
+ * \param max pointer to the maximal quality (normalized) to fill.
+ * \param avg pointer to the average quality (normalized) to fill.
+ * \param min pointer to the minimal quality (normalized) to fill.
+ * \param iel pointer to the index of the worst tetra (to fill).
  * \param good number of good elements (to fill).
  * \param med number of elements with a quality greather than 0.5 (to fill).
- * \param his pointer toward the mesh histogram (to fill).
+ * \param his pointer to the mesh histogram (to fill).
  * \param imprim verbosity level
  *
  * Compute the needed quality information in order to print the quality histogram
  * in optimLES mode.
  *
  */
-void MMG3D_computeLESqua(MMG5_pMesh mesh,MMG5_pSol met,int *ne,double *max,double *avg,
-                         double *min,int *iel,int *good,int *med,int his[5],int imprim) {
+void MMG3D_computeLESqua(MMG5_pMesh mesh,MMG5_pSol met,MMG5_int *ne,double *max,double *avg,
+                         double *min,MMG5_int *iel,MMG5_int *good,MMG5_int *med,MMG5_int his[5],int imprim) {
   MMG5_pTetra    pt;
   double         rap;
-  int            k,ok,nex;
-  static char    mmgWarn0=0;
+  MMG5_int       k,ok,nex;
+  static int8_t  mmgWarn0=0;
 
   /*compute tet quality*/
   for (k=1; k<=mesh->ne; k++) {
@@ -389,7 +427,7 @@ void MMG3D_computeLESqua(MMG5_pMesh mesh,MMG5_pSol met,int *ne,double *max,doubl
       fprintf(stderr,"  ## Warning: %s: at least 1 negative volume.\n",
               __func__);
     }
-    rap = 1 - MMG3D_ALPHAD * pt->qual;
+    rap = 1. - MMG3D_ALPHAD * pt->qual;
     if ( rap > (*min) ) {
       (*min) = rap;
       (*iel) = ok;
@@ -424,7 +462,7 @@ void MMG3D_computeLESqua(MMG5_pMesh mesh,MMG5_pSol met,int *ne,double *max,doubl
  * \param iel index of the worst tetra.
  * \param good number of good elements.
  * \param med number of elements with a quality greather than 0.5
- * \param his pointer toward the mesh histogram.
+ * \param his pointer to the mesh histogram.
  * \param nrid number of tetra with 4 ridge points if we want to warn the user.
  * \param optimLES 1 if we work in optimLES mode, 0 otherwise
  * \param imprim verbosity level
@@ -435,16 +473,16 @@ void MMG3D_computeLESqua(MMG5_pMesh mesh,MMG5_pSol met,int *ne,double *max,doubl
  * that print the histogram for special metric at ridges.
  *
  */
-int MMG3D_displayQualHisto(int ne,double max,double avg,double min,int iel,
-                           int good,int med,int his[5],int nrid,int optimLES,
+int MMG3D_displayQualHisto(MMG5_int ne,double max,double avg,double min,MMG5_int iel,
+                           MMG5_int good,MMG5_int med,MMG5_int his[5],MMG5_int nrid,int optimLES,
                            int imprim) {
 
   fprintf(stdout,"\n  -- MESH QUALITY");
   if ( optimLES )
     fprintf(stdout," (LES)");
-  fprintf(stdout,"  %d\n",ne);
+  fprintf(stdout,"  %" MMG5_PRId "\n",ne);
 
-  fprintf(stdout,"     BEST   %8.6f  AVRG.   %8.6f  WRST.   %8.6f (%d)\n",
+  fprintf(stdout,"     BEST   %8.6f  AVRG.   %8.6f  WRST.   %8.6f (%" MMG5_PRId ")\n",
           max,avg / ne,min,iel);
 
   return ( MMG3D_displayQualHisto_internal(ne,max,avg,min,iel,good,med,his,
@@ -459,7 +497,7 @@ int MMG3D_displayQualHisto(int ne,double max,double avg,double min,int iel,
  * \param iel index of the worst tetra.
  * \param good number of good elements.
  * \param med number of elements with a quality greather than 0.5
- * \param his pointer toward the mesh histogram.
+ * \param his pointer to the mesh histogram.
  * \param nrid number of tetra with 4 ridge points if we want to warn the user.
  * \param optimLES 1 if we work in optimLES mode, 0 otherwise
  * \param imprim verbosity level
@@ -469,27 +507,48 @@ int MMG3D_displayQualHisto(int ne,double max,double avg,double min,int iel,
  * Print histogram of mesh qualities for special storage of metric at ridges.
  *
  */
-int MMG3D_displayQualHisto_internal(int ne,double max,double avg,double min,int iel,
-                                    int good,int med,int his[5],int nrid,int optimLES,
+int MMG3D_displayQualHisto_internal(MMG5_int ne,double max,double avg,double min,MMG5_int iel,
+                                    MMG5_int good,MMG5_int med,MMG5_int his[5],MMG5_int nrid,int optimLES,
                                     int imprim)
 {
-  int i,imax;
+  const double les_ticks[6] = {0,0.6,0.9,0.93,0.99,1};
+  int          i,imax;
 
-  if ( optimLES )
-    return 1;
+  if ( abs(imprim) >= 3 ){
+    if ( optimLES ) {
+      /* print histo */
+      fprintf(stdout,"     HISTOGRAMM:");
+      fprintf(stdout,"  %6.2f %% < 0.6\n",100.0*((float)good/(float)ne));
+      if ( abs(imprim) > 3 ) {
+        fprintf(stdout,"                  %6.2f %% < 0.9\n",100.0*( (float)med/(float)ne));
 
-  else if ( abs(imprim) >= 3 ){
-    /* print histo */
-    fprintf(stdout,"     HISTOGRAMM:");
-    fprintf(stdout,"  %6.2f %% > 0.12\n",100.0*((float)good/(float)ne));
-    if ( abs(imprim) > 3 ) {
-      fprintf(stdout,"                  %6.2f %% >  0.5\n",100.0*( (float)med/(float)ne));
-      imax = MG_MIN(4,(int)(5.*max));
-      for (i=imax; i>=(int)(5*min); i--) {
-        fprintf(stdout,"     %5.1f < Q < %5.1f   %7d   %6.2f %%\n",
-                i/5.,i/5.+0.2,his[i],100.*((float)his[i]/(float)ne));
+        assert ( min >= max );
+        for ( i=0; i<5; ++i ) {
+          if ( max < les_ticks[i+1] && min >= les_ticks[i] ) {
+            fprintf(stdout,"     %5.2f < Q < %5.2f   %7"MMG5_PRId"   %6.2f %%\n",
+                    les_ticks[i],les_ticks[i+1],his[i],
+                    100.*((float)his[i]/(float)ne));
+          }
+        }
       }
-      if ( nrid ) fprintf(stdout,"\n  ## WARNING: %d TETRA WITH 4 RIDGES POINTS\n",nrid);
+      return 1;
+    }
+    else {
+      /* print histo */
+      fprintf(stdout,"     HISTOGRAMM:");
+      fprintf(stdout,"  %6.2f %% > 0.12\n",100.0*((float)good/(float)ne));
+      if ( abs(imprim) > 3 ) {
+        fprintf(stdout,"                  %6.2f %% >  0.5\n",100.0*( (float)med/(float)ne));
+        imax = MG_MIN(4,(int)(5.*max));
+        for (i=imax; i>=(int)(5*min); i--) {
+          fprintf(stdout,"     %5.1f < Q < %5.1f   %7"MMG5_PRId"   %6.2f %%\n",
+                  i/5.,i/5.+0.2,his[i],100.*((float)his[i]/(float)ne));
+        }
+        if ( nrid ) {
+          fprintf(stdout,"\n  ## WARNING: %" MMG5_PRId " TETRA WITH 4 RIDGES POINTS:"
+                  " UNABLE TO COMPUTE ANISO QUALITY.\n",nrid);
+        }
+      }
     }
   }
 
@@ -497,28 +556,29 @@ int MMG3D_displayQualHisto_internal(int ne,double max,double avg,double min,int 
 }
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param met pointer toward the metric structure.
- * \param ne pointer toward the number of used tetra (to fill).
- * \param max pointer toward the maximal quality (normalized) to fill.
- * \param avg pointer toward the average quality (normalized) to fill.
- * \param min pointer toward the minimal quality (normalized) to fill.
- * \param iel pointer toward the index of the worst tetra (to fill).
+ * \param mesh pointer to the mesh structure.
+ * \param met pointer to the metric structure.
+ * \param ne pointer to the number of used tetra (to fill).
+ * \param max pointer to the maximal quality (normalized) to fill.
+ * \param avg pointer to the average quality (normalized) to fill.
+ * \param min pointer to the minimal quality (normalized) to fill.
+ * \param iel pointer to the index of the worst tetra (to fill).
  * \param good number of good elements (to fill).
  * \param med number of elements with a quality greather than 0.5 (to fill).
- * \param his pointer toward the mesh histogram (to fill).
+ * \param his pointer to the mesh histogram (to fill).
  * \param imprim verbosity level
  *
  * Compute the needed quality information in order to print the quality histogram
  * (for a classic storage of the metric at ridges).
  *
  */
-void MMG3D_computeInqua(MMG5_pMesh mesh,MMG5_pSol met,int *ne,double *max,double *avg,
-                        double *min,int *iel,int *good,int *med,int his[5],int imprim) {
-  MMG5_pTetra pt;
-  double      rap;
-  int         k,ok,ir,nex;
-  static char mmgWarn0 = 0;
+void MMG3D_computeInqua(MMG5_pMesh mesh,MMG5_pSol met,MMG5_int *ne,double *max,double *avg,
+                        double *min,MMG5_int *iel,MMG5_int *good,MMG5_int *med,MMG5_int his[5],int imprim) {
+  MMG5_pTetra   pt;
+  double        rap;
+  MMG5_int      k,ok,nex;
+  int           ir;
+  static int8_t mmgWarn0 = 0;
 
   /*compute tet quality*/
   for (k=1; k<=mesh->ne; k++) {
@@ -577,8 +637,8 @@ void MMG3D_computeInqua(MMG5_pMesh mesh,MMG5_pSol met,int *ne,double *max,double
 }
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param met pointer toward the metric structure.
+ * \param mesh pointer to the mesh structure.
+ * \param met pointer to the metric structure.
  * \return 0 if the worst element has a nul quality, 1 otherwise.
  *
  * Print histogram of mesh qualities for classic storage of metric at ridges.
@@ -586,7 +646,8 @@ void MMG3D_computeInqua(MMG5_pMesh mesh,MMG5_pSol met,int *ne,double *max,double
  */
 int MMG3D_inqua(MMG5_pMesh mesh,MMG5_pSol met) {
   double      rapmin,rapmax,rapavg;
-  int         k,med,good,iel,ne,his[5];
+  int         k;
+  MMG5_int    med,good,iel,ne,his[5];
 
   ne = iel = good = med = 0;
   for ( k=0; k<5; ++k ) {
@@ -614,16 +675,16 @@ int MMG3D_inqua(MMG5_pMesh mesh,MMG5_pSol met) {
 }
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param met pointer toward the metric structure.
- * \param ne pointer toward the number of used tetra (to fill).
- * \param max pointer toward the maximal quality (normalized) to fill.
- * \param avg pointer toward the average quality (normalized) to fill.
- * \param min pointer toward the minimal quality (normalized) to fill.
- * \param iel pointer toward the index of the worst tetra (to fill).
+ * \param mesh pointer to the mesh structure.
+ * \param met pointer to the metric structure.
+ * \param ne pointer to the number of used tetra (to fill).
+ * \param max pointer to the maximal quality (normalized) to fill.
+ * \param avg pointer to the average quality (normalized) to fill.
+ * \param min pointer to the minimal quality (normalized) to fill.
+ * \param iel pointer to the index of the worst tetra (to fill).
  * \param good number of good elements (to fill).
  * \param med number of elements with a quality greather than 0.5 (to fill).
- * \param his pointer toward the mesh histogram (to fill).
+ * \param his pointer to the mesh histogram (to fill).
  * \param nrid number of tetra with 4 ridge points if we want to warn the user
  *             to fill.
  * \param imprim verbosity level
@@ -632,14 +693,15 @@ int MMG3D_inqua(MMG5_pMesh mesh,MMG5_pSol met) {
  * (for special storage of the metric at ridges).
  *
  */
-void MMG3D_computeOutqua(MMG5_pMesh mesh,MMG5_pSol met,int *ne,double *max,double *avg,
-                         double *min,int *iel,int *good,int *med,int his[5],
-                         int *nrid,int imprim) {
-  MMG5_pTetra pt;
-  MMG5_pPoint ppt;
-  double      rap;
-  int         i,k,ok,ir,nex,n;
-  static char mmgWarn0 = 0;
+void MMG3D_computeOutqua(MMG5_pMesh mesh,MMG5_pSol met,MMG5_int *ne,double *max,double *avg,
+                         double *min,MMG5_int *iel,MMG5_int *good,MMG5_int *med,MMG5_int his[5],
+                         MMG5_int *nrid,int imprim) {
+  MMG5_pTetra   pt;
+  MMG5_pPoint   ppt;
+  double        rap;
+  int           i,ir,n;
+  MMG5_int      k,ok,nex;
+  static int8_t mmgWarn0 = 0;
 
   /*compute tet quality*/
   for (k=1; k<=mesh->ne; k++) {
@@ -671,16 +733,22 @@ void MMG3D_computeOutqua(MMG5_pMesh mesh,MMG5_pSol met,int *ne,double *max,doubl
       fprintf(stderr,"  ## Warning: %s: at least 1 negative volume\n",
               __func__);
     }
-    n = 0;
-    for(i=0 ; i<4 ; i++) {
-      ppt = &mesh->point[pt->v[i]];
-      if(!(MG_SIN(ppt->tag) || MG_NOM & ppt->tag) && (ppt->tag & MG_GEO)) continue;
-      n++;
+
+    /* Count the number of tets with only ridge metric if special metric storage
+     * at ridge. */
+    if ( mesh->info.metRidTyp==1 ) {
+      n = 0;
+      for(i=0 ; i<4 ; i++) {
+        ppt = &mesh->point[pt->v[i]];
+        if(!(MG_SIN(ppt->tag) || MG_NOM & ppt->tag) && (ppt->tag & MG_GEO)) continue;
+        n++;
+      }
+      if(!n) {
+        (*nrid)++;
+        continue;
+      }
     }
-    if(!n) {
-      (*nrid)++;
-      continue;
-    }
+
     rap = MMG3D_ALPHAD * pt->qual;
     if ( rap < (*min) ) {
       (*min) = rap;
@@ -701,8 +769,8 @@ void MMG3D_computeOutqua(MMG5_pMesh mesh,MMG5_pSol met,int *ne,double *max,doubl
 }
 
 /**
- * \param mesh pointer toward the mesh structure.
- * \param met pointer toward the metric structure.
+ * \param mesh pointer to the mesh structure.
+ * \param met pointer to the metric structure.
  *
  * \return 0 if the worst element has a nul quality, 1 otherwise.
  *
@@ -711,7 +779,9 @@ void MMG3D_computeOutqua(MMG5_pMesh mesh,MMG5_pSol met,int *ne,double *max,doubl
  */
 int MMG3D_outqua(MMG5_pMesh mesh,MMG5_pSol met) {
   double      rapmin,rapmax,rapavg;
-  int         k,med,good,iel,ne,his[5],nrid;
+  int         k;
+  MMG5_int    his[5];
+  MMG5_int    med,good,iel,ne,nrid;
 
   nrid = ne = iel = good = med = 0;
   for ( k=0; k<5; ++k ) {
@@ -739,8 +809,8 @@ int MMG3D_outqua(MMG5_pMesh mesh,MMG5_pSol met) {
 }
 
 /**
- * \param mesh pointer toward the mesh.
- * \param sol, pointer toward the sol structure.
+ * \param mesh pointer to the mesh.
+ * \param sol, pointer to the sol structure.
  * \param weightelt put weight on elts.
  * \param npcible estimation of the final number of nodes/
  *
@@ -754,23 +824,24 @@ int MMG3D_outqua(MMG5_pMesh mesh,MMG5_pSol met) {
 int MMG5_countelt(MMG5_pMesh mesh,MMG5_pSol sol, double *weightelt, long *npcible) {
   MMG5_pTetra pt;
   double      len;
-  int         k,ia,ipa,ipb,lon,l;
+  int         ia,ipa,ipb,lon,l;
   //int   npbdry;
-  int        *pdel,lenint,loc,nedel,longen;
-  //int      isbdry;
-  double   dned,dnface,dnint/*,dnins*/,w,lenavg,lent[6];
-  double   dnpdel,dnadd,leninv,dnaddloc,dnpdelloc;
-  int      list[MMG3D_LMAX],ddebug=0,ib,nv;
-  long     nptot;
+  int         lenint,loc,nedel,longen;
+  double      dned,dnface,dnint/*,dnins*/,w,lenavg,lent[6];
+  double      dnpdel,dnadd,leninv,dnaddloc,dnpdelloc;
+  int         ddebug=0,ib,nv;
+  int64_t     list[MMG3D_LMAX];
+  MMG5_int    *pdel,k;
+  long        nptot;
   //FILE *inm;
 
-  pdel = (int*) calloc(mesh->np+1,sizeof(int));
+  pdel = (MMG5_int*) calloc(mesh->np+1,sizeof(MMG5_int));
   nptot = (long) mesh->np;
 
   // svg des poids
   // npbdry = 0;
   // inm = fopen("poid.sol","w");
-  // fprintf(inm,"MeshVersionFormatted 2\n Dimension 3 \n SolAtTetrahedra \n %d\n 1 1 \n",mesh->ne);
+  // fprintf(inm,"MeshVersionFormatted 2\n Dimension 3 \n SolAtTetrahedra \n %" MMG5_PRId "\n 1 1 \n",mesh->ne);
 
   // substraction of the half of the number of bdry vertex to avoid the surestimation due of the interface
   // for (k=1; k<=mesh->np; k++) {
@@ -805,17 +876,16 @@ int MMG5_countelt(MMG5_pMesh mesh,MMG5_pSol sol, double *weightelt, long *npcibl
     nedel = 0;
 
     for (ia=0; ia<6; ia++) {
-      longen = MMG5_coquil(mesh,k,ia,list);
+      int8_t isbdy;
+      longen = MMG5_coquil(mesh,k,ia,list,&isbdy);
       lon = longen/2;
-      //isbdry = 0;//longen%2;
+
       if ( lon<=0 ) {
         MMG5_SAFE_FREE(pdel);
         return 0;
       }
-      /* if ( isbdry )  { */
-      /*    assert(longen%2); */
-      /*    //printf("MMG5_coquil %d\n",longen/2); */
-      /*    continue; */
+      /* if ( isbdy )  { */
+       /*    continue; */
       /* } */
       //assert(!(longen%2));
       for (l=1; l<lon; l++)

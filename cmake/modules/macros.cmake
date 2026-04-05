@@ -29,10 +29,10 @@ ENDMACRO ( )
 
 ###############################################################################
 #####
-#####         Copy an automatically generated header file to another place
+#####         Copy a header file to another place
 #####
 ###############################################################################
-MACRO ( COPY_FORTRAN_HEADER
+MACRO ( COPY_HEADER
     in_dir in_file out_dir out_file
     file_dependencies
     target_name
@@ -56,30 +56,70 @@ ENDMACRO ( )
 
 ###############################################################################
 #####
+#####         Copy a header file to another place
+#####         and create the associated target
+#####
+###############################################################################
+MACRO ( COPY_1_HEADER_AND_CREATE_TARGET
+    source_dir name include_dir target_identifier )
+
+  ADD_CUSTOM_TARGET(mmg${target_identifier}_${name}_header ALL
+    DEPENDS
+    ${source_dir}/${name}.h )
+
+  COPY_HEADER (
+    ${source_dir} ${name}.h
+    ${include_dir} ${name}.h
+    mmg${target_identifier}_${name}_header copy${target_identifier}_${name} )
+
+
+ENDMACRO()
+
+###############################################################################
+#####
 #####         Copy an automatically generated header file to another place
 #####         and create the associated target
 #####
 ###############################################################################
-MACRO ( COPY_FORTRAN_HEADER_AND_CREATE_TARGET
-    binary_dir include_dir target_identifier )
+MACRO ( COPY_HEADERS_AND_CREATE_TARGET
+    source_dir binary_dir include_dir target_identifier )
 
-  COPY_FORTRAN_HEADER (
-    ${COMMON_BINARY_DIR} libmmgtypesf.h
-    ${include_dir} libmmgtypesf.h
-    mmg_fortran_header copy${target_identifier}_libmmgtypesf )
+  COPY_1_HEADER_AND_CREATE_TARGET(
+    ${source_dir} libmmg${target_identifier}
+    ${include_dir} ${target_identifier})
 
-  COPY_FORTRAN_HEADER (
-    ${binary_dir}
-    libmmg${target_identifier}f.h ${include_dir}
-    libmmg${target_identifier}f.h
-    mmg${target_identifier}_fortran_header copy_libmmg${target_identifier}f
-    )
+  COPY_1_HEADER_AND_CREATE_TARGET(
+    ${source_dir} mmg${target_identifier}_export
+    ${include_dir} ${target_identifier})
 
-  ADD_CUSTOM_TARGET(copy_${target_identifier}_headers ALL
-    DEPENDS
-    copy_libmmg${target_identifier}f copy${target_identifier}_libmmgtypesf
-    ${include_dir}/libmmg${target_identifier}.h
-    ${include_dir}/libmmgtypes.h )
+  SET ( tgt_list
+    copy${target_identifier}_libmmg${target_identifier}
+    copy${target_identifier}_mmg${target_identifier}_export )
+
+  if (PERL_FOUND)
+    COPY_HEADER (
+      ${binary_dir} libmmg${target_identifier}f.h
+      ${include_dir} libmmg${target_identifier}f.h
+      mmg${target_identifier}_fortran_header copy_libmmg${target_identifier}f )
+
+    LIST ( APPEND tgt_list copy_libmmg${target_identifier}f )
+  endif (PERL_FOUND)
+
+  IF ( MMG_INSTALL_PRIVATE_HEADERS )
+    COPY_1_HEADER_AND_CREATE_TARGET(
+      ${source_dir} libmmg${target_identifier}_private
+      ${include_dir} ${target_identifier})
+    COPY_1_HEADER_AND_CREATE_TARGET(
+      ${source_dir} mmg${target_identifier}externs_private
+      ${include_dir} ${target_identifier})
+
+    LIST ( APPEND tgt_list copy${target_identifier}_libmmg${target_identifier}_private
+      copy${target_identifier}_mmg${target_identifier}externs_private
+      )
+  ENDIF()
+
+  ADD_CUSTOM_TARGET (copy_${target_identifier}_headers ALL
+    DEPENDS ${tgt_list} ${tgt_opt_list} copy_mmgcommon_headers)
 
 ENDMACRO ( )
 
@@ -91,30 +131,58 @@ ENDMACRO ( )
 ###############################################################################
 
 MACRO ( ADD_AND_INSTALL_LIBRARY
-    target_name target_type sources output_name )
+    target_name target_type target_dependencies sources output_name )
 
   ADD_LIBRARY ( ${target_name} ${target_type} ${sources} )
+  ADD_LIBRARY ( Mmg::${target_name} ALIAS ${target_name} )
 
-  IF ( CMAKE_VERSION VERSION_LESS 2.8.12 )
-    INCLUDE_DIRECTORIES ( ${target_name} PUBLIC
-      ${COMMON_BINARY_DIR} ${COMMON_SOURCE_DIR} ${PROJECT_BINARY_DIR}/include )
-  ELSE ( )
-    TARGET_INCLUDE_DIRECTORIES ( ${target_name} PUBLIC
-      ${COMMON_BINARY_DIR} ${COMMON_SOURCE_DIR} ${PROJECT_BINARY_DIR}/include )
-  ENDIF ( )
+  IF ( ${CMAKE_C_COMPILER_ID} STREQUAL "Clang" AND DEFINED CMAKE_C_COMPILER_VERSION )
+    IF ( ${CMAKE_C_COMPILER_VERSION} VERSION_GREATER 10 )
+      target_compile_options(${target_name} PRIVATE "-fcommon")
+    ENDIF()
+  ENDIF()
 
-  SET_TARGET_PROPERTIES ( ${target_name}
-    PROPERTIES OUTPUT_NAME ${output_name} )
+  IF (NOT WIN32 OR MINGW)
+    ADD_DEPENDENCIES(${target_name} GenerateGitHashMmg)
+  ENDIF()
+  ADD_DEPENDENCIES( ${target_name} ${target_dependencies})
+
+  target_include_directories( ${target_name} BEFORE PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include/>
+    $<BUILD_INTERFACE:${MMGCOMMON_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${MMGCOMMON_BINARY_DIR}>
+    $<BUILD_INTERFACE:${MMG3D_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${MMGS_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  )
+
+  if ( SCOTCH_FOUND AND NOT USE_SCOTCH MATCHES OFF )
+    message(STATUS "[mmg] add include scotch directories ${SCOTCH_INCLUDE_DIRS}")
+    target_include_directories( ${target_name} PUBLIC ${SCOTCH_INCLUDE_DIRS} )
+  endif()
+
+  SET_TARGET_PROPERTIES ( ${target_name} PROPERTIES
+    OUTPUT_NAME ${output_name}
+    VERSION ${CMAKE_RELEASE_VERSION_MAJOR}.${CMAKE_RELEASE_VERSION_MINOR}.${CMAKE_RELEASE_VERSION_PATCH}
+    SOVERSION ${CMAKE_RELEASE_VERSION_MAJOR} )
+
 
   SET_PROPERTY(TARGET ${target_name} PROPERTY C_STANDARD 99)
 
-  TARGET_LINK_LIBRARIES ( ${target_name} ${LIBRARIES} )
+  TARGET_LINK_LIBRARIES ( ${target_name} PRIVATE ${LIBRARIES} )
 
-  INSTALL ( TARGETS ${target_name}
-    ARCHIVE DESTINATION lib
-    LIBRARY DESTINATION lib
-    COMPONENT lib)
+  IF (NOT CMAKE_INSTALL_LIBDIR)
+    SET(CMAKE_INSTALL_LIBDIR lib)
+  ENDIF()
 
+
+  SET ( MmgTargetsExported 1 )
+  install(TARGETS ${target_name} EXPORT MmgTargets
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
 ENDMACRO ( )
 
 ###############################################################################
@@ -125,36 +193,47 @@ ENDMACRO ( )
 ###############################################################################
 
 MACRO ( ADD_AND_INSTALL_EXECUTABLE
-    exec_name lib_files main_file )
+    exec_name target_dependencies lib_files main_file )
 
-  IF ( NOT TARGET lib${exec_name}_a AND NOT TARGET lib${exec_name}_so )
+  # if one of the Mmg lib is built, use it instead of compiling whole sources
+  IF ( NOT TARGET lib${exec_name}_a AND NOT TARGET lib${exec_name}_so
+      AND NOT TARGET libmmg_a AND NOT TARGET libmmg_so )
     ADD_EXECUTABLE ( ${exec_name} ${lib_files} ${main_file} )
   ELSE ( )
     ADD_EXECUTABLE ( ${exec_name} ${main_file})
 
     SET_PROPERTY(TARGET ${exec_name} PROPERTY C_STANDARD 99)
 
-    IF ( NOT TARGET lib${exec_name}_a )
-      TARGET_LINK_LIBRARIES(${exec_name} lib${exec_name}_so)
+    # link libraries in order of simplicities and depending on built targets
+    IF ( TARGET  lib${exec_name}_a )
+      TARGET_LINK_LIBRARIES(${exec_name} PRIVATE lib${exec_name}_a)
+    ELSEIF ( TARGET  libmmg_a )
+      TARGET_LINK_LIBRARIES(${exec_name} PRIVATE libmmg_a)
+    ELSEIF ( TARGET lib${exec_name}_so )
+      TARGET_LINK_LIBRARIES(${exec_name} PRIVATE lib${exec_name}_so)
     ELSE ( )
-      TARGET_LINK_LIBRARIES(${exec_name} lib${exec_name}_a)
+      TARGET_LINK_LIBRARIES(${exec_name} PRIVATE libmmg_so)
     ENDIF ( )
 
   ENDIF ( )
 
-  IF ( WIN32 AND NOT MINGW AND USE_SCOTCH )
+  IF (NOT WIN32 OR MINGW)
+    ADD_DEPENDENCIES(${exec_name} GenerateGitHashMmg)
+  endif()
+  ADD_DEPENDENCIES(${exec_name} ${target_dependencies})
+
+  IF ( WIN32 AND NOT MINGW AND SCOTCH_FOUND AND NOT USE_SCOTCH MATCHES OFF )
     my_add_link_flags ( ${exec_name} "/SAFESEH:NO")
   ENDIF ( )
 
- IF ( CMAKE_VERSION VERSION_LESS 2.8.12 )
-   INCLUDE_DIRECTORIES ( ${exec_name} PUBLIC
-     ${COMMON_BINARY_DIR} ${COMMON_SOURCE_DIR} ${PROJECT_BINARY_DIR}/include )
- ELSE ( )
-   TARGET_INCLUDE_DIRECTORIES ( ${exec_name} PUBLIC
-     ${COMMON_BINARY_DIR} ${COMMON_SOURCE_DIR} ${PROJECT_BINARY_DIR}/include )
+  TARGET_INCLUDE_DIRECTORIES ( ${exec_name} BEFORE PUBLIC
+    ${MMGCOMMON_BINARY_DIR} ${MMGCOMMON_SOURCE_DIR} ${PROJECT_BINARY_DIR}/include ${PROJECT_BINARY_DIR} )
+  if ( SCOTCH_FOUND AND NOT USE_SCOTCH MATCHES OFF )
+    message(STATUS "[mmg] add include scotch directories ${SCOTCH_INCLUDE_DIRS}")
+    target_include_directories( ${exec_name} BEFORE PUBLIC ${SCOTCH_INCLUDE_DIRS} )
  ENDIF ( )
 
-  TARGET_LINK_LIBRARIES ( ${exec_name} ${LIBRARIES}  )
+  TARGET_LINK_LIBRARIES ( ${exec_name} PRIVATE ${LIBRARIES}  )
 
   INSTALL(TARGETS ${exec_name} RUNTIME DESTINATION bin COMPONENT appli)
 
@@ -187,55 +266,25 @@ ENDMACRO ( )
 
 ###############################################################################
 #####
-#####         Add Executable that must be tested by ci
-#####
-###############################################################################
-
-MACRO ( ADD_EXEC_TO_CI_TESTS exec_name list_name )
-
-  IF(${CMAKE_BUILD_TYPE} MATCHES "Debug")
-    SET(EXECUT ${EXECUTABLE_OUTPUT_PATH}/${exec_name}_debug)
-    SET(BUILDNAME ${BUILDNAME}_debug CACHE STRING "build name variable")
-  ELSEIF(${CMAKE_BUILD_TYPE} MATCHES "Release")
-    SET(EXECUT ${EXECUTABLE_OUTPUT_PATH}/${exec_name}_O3)
-    SET(BUILDNAME ${BUILDNAME}_O3 CACHE STRING "build name variable")
-  ELSEIF(${CMAKE_BUILD_TYPE} MATCHES "RelWithDebInfo")
-    SET(EXECUT ${EXECUTABLE_OUTPUT_PATH}/${exec_name}_O3d)
-    SET(BUILDNAME ${BUILDNAME}_O3d CACHE STRING "build name variable")
-  ELSEIF(${CMAKE_BUILD_TYPE} MATCHES "MinSizeRel")
-    SET(EXECUT ${EXECUTABLE_OUTPUT_PATH}/${exec_name}_Os)
-    SET(BUILDNAME ${BUILDNAME}_Os CACHE STRING "build name variable")
-  ELSE()
-    SET(EXECUT ${EXECUTABLE_OUTPUT_PATH}/${exec_name})
-    SET(BUILDNAME ${BUILDNAME} CACHE STRING "build name variable")
-  ENDIF()
-
-  SET ( ${list_name} ${EXECUT} )
-
-ENDMACRO ( )
-
-
-###############################################################################
-#####
 #####         Add a library test
 #####
 ###############################################################################
 
-MACRO ( ADD_LIBRARY_TEST target_name main_path target_dependency lib_name )
+MACRO ( ADD_LIBRARY_TEST target_name main_path target_dependency lib_name lib_type )
   ADD_EXECUTABLE ( ${target_name} ${main_path} )
   ADD_DEPENDENCIES( ${target_name} ${target_dependency} )
 
-  IF ( CMAKE_VERSION VERSION_LESS 2.8.12 )
-    INCLUDE_DIRECTORIES ( ${target_name} PUBLIC ${PROJECT_BINARY_DIR}/include )
-  ELSE ( )
-    TARGET_INCLUDE_DIRECTORIES ( ${target_name} PUBLIC ${PROJECT_BINARY_DIR}/include )
-  ENDIF ( )
+  TARGET_INCLUDE_DIRECTORIES ( ${target_name} BEFORE PUBLIC ${PROJECT_BINARY_DIR}/include )
 
-  IF ( WIN32 AND ((NOT MINGW) AND USE_SCOTCH) )
+  IF ( WIN32 AND ((NOT MINGW) AND SCOTCH_FOUND AND NOT USE_SCOTCH MATCHES OFF) )
     MY_ADD_LINK_FLAGS ( ${target_name} "/SAFESEH:NO" )
   ENDIF ( )
 
-  TARGET_LINK_LIBRARIES ( ${target_name}  ${lib_name} )
+  IF ( "${lib_type}" STREQUAL "SHARED" )
+    ADD_DEFINITIONS(-D${lib_name}_IMPORTS)
+  ENDIF()
+
+  TARGET_LINK_LIBRARIES ( ${target_name}  PRIVATE ${lib_name} )
   INSTALL(TARGETS ${target_name} RUNTIME DESTINATION bin COMPONENT appli )
 
 ENDMACRO ( )

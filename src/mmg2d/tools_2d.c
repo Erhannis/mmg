@@ -31,20 +31,21 @@
  * \copyright GNU Lesser General Public License.
  */
 
-#include "mmg2d.h"
+#include "libmmg2d_private.h"
 
 /**
- * \param mesh pointer toward the mesh structure.
+ * \param mesh pointer to the mesh structure.
  * \param kel index of the element in the unpacked mesh
+ *
  *
  * \return 0 if fail, index of the element in packed numerotation otherwise.
  *
  * find the element index in packed numerotation
  *
  */
-int MMG2D_indElt(MMG5_pMesh mesh, int kel) {
-    MMG5_pTria pt;
-    int        ne, k;
+MMG5_int MMG2D_indElt(MMG5_pMesh mesh, MMG5_int kel) {
+    MMG5_pTria      pt;
+    MMG5_int        ne, k;
 
     ne = 0;
     for (k=1; k<=mesh->nt; k++) {
@@ -58,7 +59,7 @@ int MMG2D_indElt(MMG5_pMesh mesh, int kel) {
 }
 
 /**
- * \param mesh pointer toward the mesh structure.
+ * \param mesh pointer to the mesh structure.
  * \param kp index of the point in the unpacked mesh
  *
  * \return 0 if fail, index of the point in packed numerotation otherwise.
@@ -66,9 +67,9 @@ int MMG2D_indElt(MMG5_pMesh mesh, int kel) {
  * find the point index in packed numerotation
  *
  */
-int MMG2D_indPt(MMG5_pMesh mesh, int kp) {
+MMG5_int MMG2D_indPt(MMG5_pMesh mesh, MMG5_int kp) {
     MMG5_pPoint ppt;
-    int         np, k;
+    MMG5_int    np, k;
 
     np = 0;
     for (k=1; k<=mesh->np; k++) {
@@ -79,4 +80,30 @@ int MMG2D_indPt(MMG5_pMesh mesh, int kp) {
         }
     }
     return 0;
+}
+
+/**
+ * \param mesh pointer to the mesh structure.
+ * \param nsd index of subdomain to keep.
+ *
+ * Keep only subdomain of index \a nsd and remove other subdomains.
+ *
+ */
+void MMG2D_keep_only1Subdomain ( MMG5_pMesh mesh,int nsd ) {
+
+  if ( !nsd ) {
+    return;
+  }
+
+  if ( mesh->info.imprim > 4 || mesh->info.ddebug ) {
+    fprintf(stdout,"\n  -- ONLY KEEP DOMAIN OF REF %d\n",nsd );
+  }
+
+  MMG5_mark_verticesAsUnused ( mesh );
+
+  MMG5_keep_subdomainElts ( mesh, nsd, MMG2D_delElt );
+
+  MMG5_mark_usedVertices ( mesh,MMG2D_delPt );
+
+  return;
 }

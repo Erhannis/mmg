@@ -28,7 +28,8 @@ int main(int argc,char *argv[]) {
   int             i,j,opt;
 
   /* To manually recover the mesh */
-  int             nsol,np,typSol[MMG5_NSOLS_MAX];
+  MMG5_int        np;
+  int             nsol,typSol[MMG5_NSOLS_MAX];
   double          *sols;
 
   /* Filenames */
@@ -66,9 +67,9 @@ int main(int argc,char *argv[]) {
   /* args of InitMesh:
    * MMG5_ARG_start: we start to give the args of a variadic func
    * MMG5_ARG_ppMesh: next arg will be a pointer over a MMG5_pMesh
-   * &mmgMesh: pointer toward your MMG5_pMesh (that store your mesh)
+   * &mmgMesh: pointer to your MMG5_pMesh (that stores your mesh)
    * MMG5_ARG_ppMet: next arg will be a pointer over a MMG5_pSol storing a metric
-   * &mmgSol: pointer toward your MMG5_pSol (that store your metric) */
+   * &mmgSol: pointer to your MMG5_pSol (that stores your metric) */
 
   mmgMesh = NULL;
   mmgSol  = NULL;
@@ -115,6 +116,10 @@ int main(int argc,char *argv[]) {
       else if ( typSol[i-1] == MMG5_Tensor ) {
         sols = (double*) calloc(np*6, sizeof(double));
       }
+      else {
+        puts("Unexpected solution type.");
+        exit(EXIT_FAILURE);
+      }
 
       if ( MMG3D_Get_ithSols_inSolsAtVertices(mmgSol,i,sols) !=1 ) exit(EXIT_FAILURE);
 
@@ -129,6 +134,10 @@ int main(int argc,char *argv[]) {
         sols = (double*) calloc(3, sizeof(double));
       else if ( typSol[i-1] == MMG5_Tensor ) {
         sols = (double*) calloc(6, sizeof(double));
+      }
+      else {
+        puts("Unexpected solution type.");
+        exit(EXIT_FAILURE);
       }
 
       for ( j=1; j<=np; ++j ) {
@@ -155,9 +164,10 @@ int main(int argc,char *argv[]) {
     exit(EXIT_FAILURE);
 
   /** 3) Free the MMG3D structures */
+  MMG3D_Free_allSols(mmgMesh,&mmgSol);
+
   MMG3D_Free_all(MMG5_ARG_start,
                  MMG5_ARG_ppMesh,&mmgMesh,MMG5_ARG_ppSols,&tmpSol,
-                 MMG5_ARG_ppSols,&mmgSol,
                  MMG5_ARG_end);
 
   free(filename);
@@ -166,5 +176,5 @@ int main(int argc,char *argv[]) {
   free(fileout);
   fileout = NULL;
 
-  return(0);
+  return 0;
 }

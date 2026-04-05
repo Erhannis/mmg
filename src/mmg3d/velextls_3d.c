@@ -34,17 +34,18 @@
  */
 #ifdef USE_ELAS
 
-#include "mmg3d.h"
+#include "libmmg3d_private.h"
 #include "ls_calls.h"
+
 #define MMG5_DEGTOL    0.75
 #define _LS_LAMBDA      10.0e5
 #define _LS_MU          8.2e5
 
 /**
- * \param mesh pointer toward the mesh
- * \param disp pointer toward the displacement
- * \param lsst pointer toward the elastic structure (mesh + sol + info)
- * \param npfin pointer toward the final number of points in the packed mesh
+ * \param mesh pointer to the mesh
+ * \param disp pointer to the displacement
+ * \param lsst pointer to the elastic structure (mesh + sol + info)
+ * \param npfin pointer to the final number of points in the packed mesh
  * for the elasticity call
  *
  * \return invperm array of the permutation (vertices) from the submesh (given
@@ -55,15 +56,15 @@
  * Fill npf = number of vertices in the packed mesh.
  *
  */
-int* MMG5_packLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int *npfin) {
+MMG5_int* MMG5_packLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,MMG5_int *npfin) {
   MMG5_pTetra    pt,pt1;
   MMG5_pxTetra   pxt;
   MMG5_pPoint    p0;
   double         u[3];
-  int            k,n,ip,iel,jel,nlay,npf,ntf,ilist,ilisto,ilistck,vper[4],*list;
-  int            *perm,*invperm,*adja;
+  int            n,nlay,ilist,ilisto,ilistck;
+  MMG5_int       k,ip,npf,ntf,iel,jel,*perm,*invperm,*adja,*list,vper[4];
   int            refdirh,refdirnh;
-  char           i,j,jface;
+  int8_t         i,j,jface;
 
   nlay = 20;
   refdirh = 0;
@@ -73,11 +74,11 @@ int* MMG5_packLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int *npfin) {
   u[0] = u[1] = u[2] = 0.0;
   *npfin = 0;
 
-  MMG5_ADD_MEM(mesh,(mesh->ne+1)*sizeof(int),"element list",return NULL);
-  MMG5_SAFE_CALLOC(list,mesh->ne+1,int,return NULL);
+  MMG5_ADD_MEM(mesh,(mesh->ne+1)*sizeof(MMG5_int),"element list",return NULL);
+  MMG5_SAFE_CALLOC(list,mesh->ne+1,MMG5_int,return NULL);
 
-  MMG5_ADD_MEM(mesh,(mesh->np+1)*sizeof(int),"point permutation",return NULL);
-  MMG5_SAFE_CALLOC(perm,mesh->np+1,int,return NULL);
+  MMG5_ADD_MEM(mesh,(mesh->np+1)*sizeof(MMG5_int),"point permutation",return NULL);
+  MMG5_SAFE_CALLOC(perm,mesh->np+1,MMG5_int,return NULL);
 
   ilist = ilisto = ilistck = 0;
 
@@ -148,11 +149,11 @@ int* MMG5_packLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int *npfin) {
   }
 
   /* Creation of the inverse permutation table */
-  MMG5_ADD_MEM ( mesh,(npf+1)*sizeof(int),"permutation table",
+  MMG5_ADD_MEM ( mesh,(npf+1)*sizeof(MMG5_int),"permutation table",
                   MMG5_DEL_MEM ( mesh,list );
                   MMG5_DEL_MEM ( mesh,perm );
                   return NULL );
-  MMG5_SAFE_CALLOC ( invperm,(npf+1),int,
+  MMG5_SAFE_CALLOC ( invperm,(npf+1),MMG5_int,
                       MMG5_DEL_MEM ( mesh,list );
                       MMG5_DEL_MEM ( mesh,perm );
                       return NULL );
@@ -225,7 +226,7 @@ int* MMG5_packLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int *npfin) {
     for(i=0; i<4; i++)
       vper[i] = perm[pt->v[i]];
 
-    if (!LS_addTet(lsst,k,vper,0) ) {
+    if (!LS_addTet(lsst,(int)k,(int*)vper,0) ) {
       fprintf(stderr,"\n  ## Error: %s: problem in fn LS_addTet. Exiting.\n",
               __func__);
       MMG5_DEL_MEM ( mesh,list );
@@ -254,7 +255,7 @@ int* MMG5_packLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int *npfin) {
         for (j=0; j<3; j++)
           vper[j] = perm[pt->v[MMG5_idir[i][j]]];
 
-        if ( !LS_addTri(lsst,ntf,vper,refdirnh) ) {
+        if ( !LS_addTri(lsst,(int)ntf,(int*)vper,refdirnh) ) {
           fprintf(stderr,"\n  ## Error: %s: problem in fn LS_addTri. Exiting.\n",
                   __func__);
           MMG5_DEL_MEM ( mesh,list );
@@ -269,7 +270,7 @@ int* MMG5_packLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int *npfin) {
         for (j=0; j<3; j++)
           vper[j] = perm[pt->v[MMG5_idir[i][j]]];
 
-        if ( !LS_addTri(lsst,ntf,vper,refdirh) ) {
+        if ( !LS_addTri(lsst,(int)ntf,(int*)vper,refdirh) ) {
           fprintf(stderr,"\n  ## Error: %s: problem in fn LS_addTri. Exiting.\n",
                   __func__);
           MMG5_DEL_MEM ( mesh,list );
@@ -282,7 +283,8 @@ int* MMG5_packLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int *npfin) {
   }
 
   if ( (abs(mesh->info.imprim) > 4 || mesh->info.ddebug) && (ilist+npf+ntf > 0) )
-    printf("Number of packed tetra %d, points %d, triangles %d\n",ilist,npf,ntf);
+    printf("Number of packed tetra %d, points %" MMG5_PRId
+           ", triangles %" MMG5_PRId "\n",ilist,npf,ntf);
 
   /* Add boundary conditions */
   if ( !LS_setBC(lsst,Dirichlet,refdirnh,'f',LS_tri,NULL) ) {
@@ -345,10 +347,10 @@ int* MMG5_packLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int *npfin) {
 }
 
 /**
- * \param mesh pointer toward the mesh
- * \param disp pointer toward the displacement
- * \param lsst pointer toward the elastic structure (mesh + sol + info)
- * \param npf pointer toward the number of points in the submesh
+ * \param mesh pointer to the mesh
+ * \param disp pointer to the displacement
+ * \param lsst pointer to the elastic structure (mesh + sol + info)
+ * \param npf pointer to the number of points in the submesh
  * \param invperm array of the permutation from the submesh toward
  * the global one
  *
@@ -357,10 +359,10 @@ int* MMG5_packLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int *npfin) {
  * Transfer solution from the submesh to the global mesh
  *
  */
-int MMG5_unpackLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int npf,int *invperm) {
+int MMG5_unpackLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,MMG5_int npf,MMG5_int *invperm) {
   double     *u;
-  int        k,ip;
-  char       i;
+  MMG5_int   ip,k;
+  int8_t     i;
 
   u = LS_getSol(lsst);
 
@@ -380,8 +382,8 @@ int MMG5_unpackLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int npf,int *invperm
 }
 
 /**
- * \param mesh pointer toward the mesh.
- * \param disp pointer toward the displacement.
+ * \param mesh pointer to the mesh.
+ * \param disp pointer to the displacement.
  *
  * \return 0 if fail, 1 if success.
  *
@@ -390,7 +392,14 @@ int MMG5_unpackLS(MMG5_pMesh mesh,MMG5_pSol disp,LSst *lsst,int npf,int *invperm
  */
 int MMG5_velextLS(MMG5_pMesh mesh,MMG5_pSol disp) {
   LSst        *lsst;
-  int         npf,*invperm;
+  MMG5_int    npf,*invperm;
+
+  /* LibElas is not compatible with int64: Check for int32 overflow */
+  if ( mesh->np > INT_MAX || mesh->ne > INT_MAX || sizeof(MMG5_int) == 8 ) {
+    fprintf(stderr,"\n  ## Error: %s: impossible to call elasticity library"
+            " with int64 integers.\n",__func__);
+    return 0;
+  }
 
   /* Creation of the data structure for the submesh */
   lsst    = LS_init(mesh->dim,mesh->ver,P1,1);
